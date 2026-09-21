@@ -183,4 +183,79 @@ docker builder prune -f --filter until=168h
 
 拉 Docker Hub、`ghcr.io`、以及从 GitHub `git clone` / `git pull` 通常都可直连，不需要配镜像加速或代理。这也是这台机器适合用「方式 A 在服务器上构建」的原因之一。
 
-如果服务器上装的是宝塔之类的面板，**建议仍用命令行执行 compose 命令**，避免面板把 compose 文件改写或另起一套容器管理逻辑，导致实际运行的东西和仓库里的文件不一致。
+### 用面板管理容器时
+
+如果服务器上装的是宝塔面板、并且用它的「容器编排」功能管理这个容器，见第九节——那种环境下方式 A（服务器构建）实际上不可用，需要走方式 B。
+
+## 九、宝塔面板「容器编排」场景
+
+面板管理的容器与命令行管理的有三个实质差别，需要针对性处理。
+
+### 1. compose 文件在面板目录里，不在你的仓库里
+
+面板会把它保存的 compose 内容放在自己的目录下运行，因此：
+
+- `build: context: .` 里的 `.` 指的是**面板目录**，那里没有源码和 Dockerfile。这个 `build` 段一旦真被执行就会失败。
+- 结论：**面板环境下不要在服务器上构建**，直接走第四节的「方式 B」——由 GitHub Actions 构建镜像，面板只负责拉取。
+
+### 2. 相对路径的数据卷会跟着 compose 文件位置走
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
+`./data` 是相对于 **compose 文件所在目录**解析的，不是相对于你的仓库。所以：
+
+- **换一个目录跑 compose，`./data` 就指向另一个空目录，应用会以全新的空数据库启动**——画布项目、历史素材、渠道配置看起来全都没了（其实旧数据还在原处，只是没被挂载）。
+- 因此从命令行接管时，第一步永远是**先查清当前实际的挂载源路径**，再把新 compose 的 `volumes` 指向同一个绝对路径：
+
+```bash
+docker inspect infinite-canvas --format '{{range .Mounts}}{{.Type}}  {{.Source}}  ->  {{.Destination}}{{"\n"}}{{end}}'
+```
+
+- 改配置时**不要动 `volumes` 和 `env_file`**，只动 `image`。这样路径不变，零数据风险。
+
+### 3. 端口以容器实际映射为准
+
+面板里显示的 compose 文本可能与容器实际运行状态不一致（改过配置但没重新创建容器时尤其如此）。**以 `docker port` 的输出为准**：
+
+```bash
+docker port infinite-canvas
+```
+
+反向代理指向的是宿主机侧那个端口。改配置时端口必须与反代目标一致，否则改完域名就访问不通。
+
+### 推荐的操作序列（方式 B + 面板）
+
+1. 打标签，让 GitHub Actions 构建镜像：
+
+```bash
+git tag v0.7.1-custom.1 && git push origin v0.7.1-custom.1
+```
+
+2. 等 Actions 跑完（仓库 Actions 面板可见进度，两个架构各一次构建）。
+3. 首次需要让服务器能拉到这个镜像。GHCR 的包**即使仓库是公开的，包本身也默认是私有的**，二选一：
+   - 在 GitHub → 头像 → Your packages → `infinite-canvas` → Package settings → 拉到底 Change visibility → 改为 Public（最简单，且符合 AGPL 派生作品公开的惯例）
+   - 或者配置面板的「仓库」凭据，或执行一次 `echo <PAT> | docker login ghcr.io -u joetop1 --password-stdin`（PAT 需 `read:packages`）
+4. 在面板的「容器编排」里编辑配置，把 `image` 换成自建镜像，**删掉 `build` 段与 `pull_policy: always`**，其余保持原样：
+
+```yaml
+services:
+  app:
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1
+    container_name: infinite-canvas
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8081:3000"
+    restart: unless-stopped
+```
+
+5. 保存后点「更新镜像」或「重启」。此后面板的「更新镜像」按钮会去拉你自己的镜像，成为发布新版本的正常入口。
+
+### 为什么必须删掉 `pull_policy: always`
+
+上游默认配置里那一行的作用是：每次启动都把 `image:` 指定的镜像重新拉一遍。而 `image:` 指向的是上游官方镜像 `ghcr.io/tigerowo/infinite-canvas:latest`。两者叠加的结果是——**只要面板重启过容器，二次开发的改动就会被上游最新版覆盖回去**，而且不会有任何提示。这是"我明明改了但没生效"的最常见原因。
