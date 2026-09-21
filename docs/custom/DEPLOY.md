@@ -151,20 +151,42 @@ echo <YOUR_PAT> | docker login ghcr.io -u joetop1 --password-stdin
 
 ## 五、部署后验证
 
+### 5.1 先确认跑的是哪个镜像（决定性的一步）
+
+```bash
+docker inspect infinite-canvas --format '镜像名: {{.Config.Image}}
+镜像ID: {{.Image}}
+创建于: {{.Created}}'
+```
+
+amd64 架构下 `v0.7.1-custom.1` 的镜像 ID 应精确等于：
+
+```
+sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3
+```
+
+| 看到的 | 含义 |
+|---|---|
+| 镜像 ID 与上面一致 | 已经是自建镜像，容器跑的就是新代码 |
+| 镜像名仍是 `ghcr.io/tigerowo/infinite-canvas:latest` | 面板配置没改成，或改完没重启 |
+| 镜像名对、ID 不同 | 标签或架构不对（误用 `:latest`、或拉到 arm64 那份） |
+
+> **不要在容器里 grep 自定义标识符来验证代码是否生效。**
+>
+> 这条弯路已经走过一次：`docker exec ... grep needsOpenAIContent /app/web/.next/static/chunks/*.js`
+> **无论镜像新旧都必然无输出**。原因是前端产物经过 minify，局部变量名会被重命名成短名，
+> 注释也会被剥离——源码里的标识符在里面根本不存在。
+>
+> 判断"跑的是哪个版本"只有两把可靠的尺子：**镜像 ID**，以及**实际功能**。
+
+### 5.2 功能验证
+
 1. 打开画布，**新建一条视频生成任务**（用 new-api 渠道）。
 2. 预期：建任务 → 轮询到 `completed` → 自动取回 mp4 → 视频出现在画布上，不再报「视频生成完成但没有返回视频地址」。
 3. 若仍失败，看失败文案：
    - `视频内容下载失败：404` → 你的 new-api 版本没有实现 `/v1/videos/{id}/content`，改用会直接返回 url 的旧路由 `/v1/video/generations/{id}`
    - `视频内容下载失败：401 / 403` → 渠道 API Key 或鉴权头有问题
    - 其他 → 把原文与「管理后台 → AI 日志」里的响应体一起看
-
-验证是否真的跑上了新代码：
-
-```bash
-docker exec infinite-canvas sh -c 'grep -c "needsOpenAIContent" /app/web/.next/static/chunks/*.js 2>/dev/null | grep -v ":0"'
-```
-
-有输出（非 0 计数）说明自定义逻辑已经进了前端产物。
 
 ## 六、回滚
 
@@ -352,6 +374,15 @@ services:
 | 镜像 | `ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1` |
 | 多架构 digest | `sha256:ce57220a73910dcd72ba3ffbc404eedb2092ca9affd2afc7e548b4be1f4d47f8` |
 | 可见性 | 匿名可拉（HTTP 200），无需登录 |
+
+各架构的摘要，用于核对服务器上 `docker inspect` 的镜像 ID：
+
+| 架构 | manifest digest | config digest（= 镜像 ID） |
+|---|---|---|
+| linux/amd64 | `sha256:f0e1a4e47ad9d6bb99772452890fe374023f87cf35e12c77d896f8ad2ed6d15b` | `sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3` |
+| linux/arm64 | `sha256:83cc64920d3bf7cb0f4c2af4a086a0704f99aea61518cf9e3137c1cbb13dfc87` | — |
+
+（香港那台服务器是 x86_64，用的是 amd64 那一行。）
 
 镜像内元数据（已核验，证明构建来源正确）：
 
