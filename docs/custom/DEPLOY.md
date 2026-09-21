@@ -159,17 +159,34 @@ docker inspect infinite-canvas --format '镜像名: {{.Config.Image}}
 创建于: {{.Created}}'
 ```
 
-amd64 架构下 `v0.7.1-custom.1` 的镜像 ID 应精确等于：
+**首选：查镜像的 revision 标签**（最直观——它直接说明镜像内代码对应哪个提交）
+
+```bash
+docker image inspect ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1 \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+```
+
+应输出 `308647a548d9d69111f9764867064ab7ca524c23`。
+
+**备选：比对镜像 ID**。amd64 架构下 `v0.7.1-custom.1` 的镜像 ID 是下面两个值之一，**两个都对**：
 
 ```
-sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3
+sha256:ce57220a73910dcd72ba3ffbc404eedb2092ca9affd2afc7e548b4be1f4d47f8   # 多架构 index digest
+sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3   # amd64 config digest
 ```
+
+> **为什么会有两个值**：取决于 Docker 的镜像存储后端。启用 containerd 存储时（Docker 25+ 常见），
+> `docker images` 的 IMAGE ID 列与 `docker inspect {{.Image}}` 显示的是 **manifest（index）digest**；
+> 传统 image store 则显示 **config digest**。两者都不是错误，只要与 registry 上对应的摘要一致即可。
+>
+> 实测案例：香港那台服务器走 containerd 存储，`docker inspect` 显示 `ce57220a…`（index digest）。
+> 单看数值容易误判成"ID 不对"，用上面的 revision 标签可以绕开这个歧义。
 
 | 看到的 | 含义 |
 |---|---|
-| 镜像 ID 与上面一致 | 已经是自建镜像，容器跑的就是新代码 |
+| revision 标签为 `308647a…`，或镜像 ID 等于上面两者之一 | 已经是自建镜像，容器跑的就是新代码 |
 | 镜像名仍是 `ghcr.io/tigerowo/infinite-canvas:latest` | 面板配置没改成，或改完没重启 |
-| 镜像名对、ID 不同 | 标签或架构不对（误用 `:latest`、或拉到 arm64 那份） |
+| 镜像名对、两个 ID 都不匹配 | 标签或架构不对（误用 `:latest`、或拉到 arm64 那份） |
 
 > **不要在容器里 grep 自定义标识符来验证代码是否生效。**
 >
@@ -177,7 +194,7 @@ sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3
 > **无论镜像新旧都必然无输出**。原因是前端产物经过 minify，局部变量名会被重命名成短名，
 > 注释也会被剥离——源码里的标识符在里面根本不存在。
 >
-> 判断"跑的是哪个版本"只有两把可靠的尺子：**镜像 ID**，以及**实际功能**。
+> 判断"跑的是哪个版本"只有三把可靠的尺子：**镜像的 revision 标签**、**镜像 ID**、以及**实际功能**。
 
 ### 5.2 功能验证
 
@@ -375,14 +392,19 @@ services:
 | 多架构 digest | `sha256:ce57220a73910dcd72ba3ffbc404eedb2092ca9affd2afc7e548b4be1f4d47f8` |
 | 可见性 | 匿名可拉（HTTP 200），无需登录 |
 
-各架构的摘要，用于核对服务器上 `docker inspect` 的镜像 ID：
+各层摘要。注意 `docker` 显示的"镜像 ID"会随**镜像存储后端**而异，下面两个值都可能出现：
 
-| 架构 | manifest digest | config digest（= 镜像 ID） |
-|---|---|---|
-| linux/amd64 | `sha256:f0e1a4e47ad9d6bb99772452890fe374023f87cf35e12c77d896f8ad2ed6d15b` | `sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3` |
-| linux/arm64 | `sha256:83cc64920d3bf7cb0f4c2af4a086a0704f99aea61518cf9e3137c1cbb13dfc87` | — |
+| 层级 | 摘要 |
+|---|---|
+| 多架构 index（总清单） | `sha256:ce57220a73910dcd72ba3ffbc404eedb2092ca9affd2afc7e548b4be1f4d47f8` |
+| linux/amd64 子 manifest | `sha256:f0e1a4e47ad9d6bb99772452890fe374023f87cf35e12c77d896f8ad2ed6d15b` |
+| linux/amd64 config digest | `sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3` |
+| linux/arm64 子 manifest | `sha256:83cc64920d3bf7cb0f4c2af4a086a0704f99aea61518cf9e3137c1cbb13dfc87` |
 
-（香港那台服务器是 x86_64，用的是 amd64 那一行。）
+- **containerd 镜像存储**（Docker 25+ 常见）→ 显示 **index digest**
+- **传统 image store** → 显示 **config digest**
+
+香港那台服务器是 x86_64、走 containerd 存储，实测 `docker inspect {{.Image}}` 显示 index digest `ce57220a…`，与上表首行吻合。
 
 镜像内元数据（已核验，证明构建来源正确）：
 
