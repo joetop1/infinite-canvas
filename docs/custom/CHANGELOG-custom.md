@@ -10,9 +10,10 @@
 | 上游文件 | 新增 | 删除 |
 |---|---|---|
 | `README.md` | 6 | 0 |
-| `web/src/services/api/video.ts` | 3 | 1 |
+| `web/src/services/api/video.ts` | 23 | 4 |
 
-唯一的 1 行删除是 `video.ts` 中被改写的 `if` 语句，与新版本成对，属合规的行内改写。
+4 行删除全部是**行内改写**（同一位置有新版本顶上），无一处是净删除：其中 1 行是 `cacheProtectedVideo` 的 `if` 判断，
+另外 3 行是把内联的 fetch/校验/上传三步收进新的 `fetchVideoContent()`，原始文件除这 4 行外其余一字未动。
 
 ## 挂载点清单（改动上游文件的全部位置）
 
@@ -20,8 +21,32 @@
 |---|---|---|
 | `README.md` | 标题与徽章之间 | 插入 6 行 AGPL §5(a) 修改声明（协议要求"显著"，故不能放文件末尾） |
 | `web/src/services/api/video.ts` | `cacheProtectedVideo()` | 追加 3 行（含 1 行注释），行内改写 1 行 |
+| `web/src/services/api/video.ts` | `cacheProtectedVideo()` 之下 | 新增独立函数 `fetchVideoContent()`（20 行，含注释与空行），行内改写 2 行 |
 
 ## 变更记录
+
+### v0.7.1-custom.2 — 取内容路由回退 + 失败可诊断
+
+- **文件**：`web/src/services/api/video.ts`
+- **新增函数**：`fetchVideoContent()`
+- **背景**：`v0.7.1-custom.1` 加上了"完成任务后去 `/videos/{id}/content` 取视频"的逻辑，但**该路径上线时从未被真实验证过**——最初那次"没有返回视频地址"的报错发生在自建镜像部署之前。也就是说第一版是"照着 new-api 的 OpenAI 兼容说明写的"，存在假设。
+
+- **两个待验证的假设**：
+
+  1. 目标 new-api 实现了 `GET /v1/videos/{id}/content`。new-api 的视频能力历史上走的是任务插件那一套（`/v1/video/generations`），新版才补 OpenAI 风格路由，具体实现取决于部署的版本。
+  2. 失败时拿不到任何线索——原实现只抛 `视频内容下载失败：${status}`，无法区分"路由不存在""文件过期""鉴权失败"。
+
+- **改法**：
+  - 抽出 `fetchVideoContent()`，先请求新路由 `/videos/{id}/content`；
+  - 若返回 **404 / 405**（路由不存在或方法不允许，而非业务错误），**自动回退**旧任务路由 `/video/generations/{id}/content`；
+  - 两条都失败时，错误信息里**同时列出两个完整 URL 与各自状态码**，一眼能分清是路由问题还是任务问题。
+  - 回退只在协议为 `openai` 时启用（`allowLegacyFallback` 传入 `needsOpenAIContent`），**不影响 88api / grok2api 既有行为**。
+
+- **为什么不直接改成旧路由**：new-api 正在往 OpenAI 标准靠，新路由才是长期正确的那个；回退只是兼容层。保留"新路由优先"能让上游 new-api 升级后无需再改代码。
+
+- **为什么用 404/405 作为回退条件**：这两个码表示"路径本身不存在"，是路由层语义。业务层错误（任务不存在、任务过期）new-api 会返回 4xx/5xx 但带 JSON 报错体，此时回退没有意义，直接抛错更有利于排查。
+
+- **验证方式**：以前端 `tsc --noEmit` 通过（`video.ts` 零错误）。**功能验证仍需真实生成一条视频**——见 `DEPLOY.md` 第 5.2 节。
 
 ### 支持 OpenAI 兼容渠道（new-api）的异步视频任务取回
 

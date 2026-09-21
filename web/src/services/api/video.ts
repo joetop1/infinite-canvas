@@ -234,10 +234,27 @@ async function cacheProtectedVideo(config: AiConfig, model: string, task: VideoR
     const needsGrokContent = isGrok2APIVideoConfig(config, model) && /\/v1\/videos\/[^/]+\/content(?:[?#]|$)/.test(url);
     if (!isCompletedVideoStatus(task.status) || task.storageKey || (!needs88APIContent && !needsGrokContent && !needsOpenAIContent)) return task;
     const taskId = task.task_id || task.id || task.video_id || "";
-    const response = await fetch(`${aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`)}?model=${encodeURIComponent(model)}`, { headers: aiHeaders(config) });
-    if (!response.ok) throw new VideoRequestError(`视频内容下载失败：${response.status}`, task);
-    const media = await uploadMediaFile(await response.blob(), "generated-video", `video-content:${videoSyncKey(config, task)}`);
+    const blob = await fetchVideoContent(config, model, taskId, needsOpenAIContent, task);
+    const media = await uploadMediaFile(blob, "generated-video", `video-content:${videoSyncKey(config, task)}`);
     return { ...task, url: media.url, video_url: media.url, storageKey: media.storageKey };
+}
+
+// [CUSTOM] 取视频内容：优先 OpenAI 新路由 {base}/videos/{id}/content；
+// 部分 new-api 版本只实现了旧任务路由，因此 404/405 时回退 {base}/video/generations/{id}/content。
+async function fetchVideoContent(config: AiConfig, model: string, taskId: string, allowLegacyFallback: boolean, task: VideoResponse): Promise<Blob> {
+    const suffix = `?model=${encodeURIComponent(model)}`;
+    const primaryPath = `/videos/${encodeURIComponent(taskId)}/content`;
+    const primaryUrl = `${aiApiUrl(config, primaryPath)}${suffix}`;
+    const primary = await fetch(primaryUrl, { headers: aiHeaders(config) });
+    if (primary.ok) return primary.blob();
+    if (!allowLegacyFallback || (primary.status !== 404 && primary.status !== 405)) {
+        throw new VideoRequestError(`视频内容下载失败：HTTP ${primary.status} @ ${primaryUrl}`, task);
+    }
+    const legacyPath = `/video/generations/${encodeURIComponent(taskId)}/content`;
+    const legacyUrl = `${aiApiUrl(config, legacyPath)}${suffix}`;
+    const legacy = await fetch(legacyUrl, { headers: aiHeaders(config) });
+    if (legacy.ok) return legacy.blob();
+    throw new VideoRequestError(`视频内容下载失败：新路由 HTTP ${primary.status} @ ${primaryUrl}；旧路由 HTTP ${legacy.status} @ ${legacyUrl}`, task);
 }
 
 async function createGrok2APIVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>) {

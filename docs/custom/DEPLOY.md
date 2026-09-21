@@ -162,31 +162,32 @@ docker inspect infinite-canvas --format '镜像名: {{.Config.Image}}
 **首选：查镜像的 revision 标签**（最直观——它直接说明镜像内代码对应哪个提交）
 
 ```bash
-docker image inspect ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1 \
+TAG=v0.7.1-custom.2      # 换成你实际部署的那个标签
+git rev-parse "$TAG"      # 本地记录：这个标签指向哪个提交
+docker image inspect ghcr.io/joetop1/infinite-canvas:$TAG \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
-应输出 `308647a548d9d69111f9764867064ab7ca524c23`。
+两条命令的输出**应当完全一致**。所以不必预先背下任何哈希值，比对本身就是自洽的。
 
-**备选：比对镜像 ID**。amd64 架构下 `v0.7.1-custom.1` 的镜像 ID 是下面两个值之一，**两个都对**：
+> 这里刻意不写死摘要值：每发一版哈希都会变，写死就得跟着改文档，反而容易抄错版本。
+> 想知道某一版的确切摘要，见第十节「构建记录」。
 
-```
-sha256:ce57220a73910dcd72ba3ffbc404eedb2092ca9affd2afc7e548b4be1f4d47f8   # 多架构 index digest
-sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3   # amd64 config digest
-```
+**备选：比对镜像 ID**。这个方法也可用，但要知道 `docker` 显示的"镜像 ID"会随
+**镜像存储后端**而变，同一个镜像可能显示成两个不同的值：
 
-> **为什么会有两个值**：取决于 Docker 的镜像存储后端。启用 containerd 存储时（Docker 25+ 常见），
-> `docker images` 的 IMAGE ID 列与 `docker inspect {{.Image}}` 显示的是 **manifest（index）digest**；
-> 传统 image store 则显示 **config digest**。两者都不是错误，只要与 registry 上对应的摘要一致即可。
->
-> 实测案例：香港那台服务器走 containerd 存储，`docker inspect` 显示 `ce57220a…`（index digest）。
-> 单看数值容易误判成"ID 不对"，用上面的 revision 标签可以绕开这个歧义。
+- **containerd 镜像存储**（Docker 25+ 常见）→ 显示 **多架构 index digest**
+- **传统 image store** → 显示 **amd64 config digest**
+
+两者都不是错误，只要与 registry 上对应标签的摘要一致即可。实测香港那台服务器走 containerd 存储，
+`docker inspect {{.Image}}` 显示的是 index digest（以 `sha256:ce57…` 开头的那一类），
+容易被误判成"ID 不对"——所以**优先用上面的 revision 标签**，可以完全绕开这个歧义。
 
 | 看到的 | 含义 |
 |---|---|
-| revision 标签为 `308647a…`，或镜像 ID 等于上面两者之一 | 已经是自建镜像，容器跑的就是新代码 |
+| revision 标签与 `git rev-parse <tag>` 一致 | 已经是自建镜像，容器跑的就是该提交的代码 |
 | 镜像名仍是 `ghcr.io/tigerowo/infinite-canvas:latest` | 面板配置没改成，或改完没重启 |
-| 镜像名对、两个 ID 都不匹配 | 标签或架构不对（误用 `:latest`、或拉到 arm64 那份） |
+| 镜像名对，但 revision 标签为空或对不上 | 标签或架构不对（误用 `:latest`、或拉到 arm64 那份） |
 
 > **不要在容器里 grep 自定义标识符来验证代码是否生效。**
 >
@@ -200,10 +201,18 @@ sha256:963539197b64d8ece976eba986bf30f8d33e027916c022a208e6c6bb3a6224e3   # amd6
 
 1. 打开画布，**新建一条视频生成任务**（用 new-api 渠道）。
 2. 预期：建任务 → 轮询到 `completed` → 自动取回 mp4 → 视频出现在画布上，不再报「视频生成完成但没有返回视频地址」。
-3. 若仍失败，看失败文案：
-   - `视频内容下载失败：404` → 你的 new-api 版本没有实现 `/v1/videos/{id}/content`，改用会直接返回 url 的旧路由 `/v1/video/generations/{id}`
-   - `视频内容下载失败：401 / 403` → 渠道 API Key 或鉴权头有问题
-   - 其他 → 把原文与「管理后台 → AI 日志」里的响应体一起看
+3. 若仍失败，**失败文案本身就是诊断信息**（`v0.7.1-custom.2` 起会带上完整 URL 与状态码）：
+
+| 文案 | 含义 | 下一步 |
+|---|---|---|
+| `HTTP 404 @ .../videos/{id}/content` | new-api 没实现这条新路由 | 代码会自动回退旧路由，若这行仍出现说明**两个路由都不存在**，去看 new-api 版本 |
+| `新路由 HTTP 404 …；旧路由 HTTP 404 …` | 新旧路由都取不到该任务 | 任务可能真的过期/被上游清理，**换一条新任务再试** |
+| `HTTP 401 / 403` | 渠道 API Key 或鉴权头不对 | 检查画布里的渠道配置 |
+| 其他 | — | 把原文与「管理后台 → AI 日志」里的响应体一起看 |
+
+> **注意"过期"与"路由不存在"的区别**：过期任务拿旧 ID 去测，新旧路由都会报 404，
+> 分不清是路由没实现还是文件被清。要判断路由是否存在，**用一条刚建的新任务**，
+> 或用一个格式合法但不存在的假 ID——后者的 404 一定是"路由或任务不存在"，与过期无关。
 
 ## 六、回滚
 
