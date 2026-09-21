@@ -180,7 +180,7 @@ docker image inspect ghcr.io/joetop1/infinite-canvas:$TAG \
 - **传统 image store** → 显示 **amd64 config digest**
 
 两者都不是错误，只要与 registry 上对应标签的摘要一致即可。实测香港那台服务器走 containerd 存储，
-`docker inspect {{.Image}}` 显示的是 index digest（以 `sha256:ce57…` 开头的那一类），
+`docker inspect {{.Image}}` 显示的是**多架构 index digest**（不是 amd64 config digest），
 容易被误判成"ID 不对"——所以**优先用上面的 revision 标签**，可以完全绕开这个歧义。
 
 | 看到的 | 含义 |
@@ -387,6 +387,60 @@ services:
 （删掉它之后仍有正常的拉取行为：当 `image:` 指定的标签本地不存在时，`docker compose up` 会自动去拉。所以换成版本号标签后不需要这一行。）
 
 ## 十、构建记录
+
+本节是「某个版本的确切摘要是什么」的权威来源。第 5.1 节之所以不写死哈希，就是因为它应该来这里查。
+
+想查**任意标签**的实际摘要（只读，不需要任何凭据）：
+
+```bash
+TAG=v0.7.1-custom.2
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:joetop1/infinite-canvas:pull&service=ghcr.io" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
+curl -sI -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json" \
+  "https://ghcr.io/v2/joetop1/infinite-canvas/manifests/$TAG" \
+  | grep -i docker-content-digest
+```
+
+### v0.7.1-custom.2 — 2026-09-21
+
+| 项目 | 值 |
+|---|---|
+| 触发 | 推送标签 `v0.7.1-custom.2`（`push` 事件） |
+| 运行 | [Actions run 35614493207](https://github.com/joetop1/infinite-canvas/actions/runs/35614493207) |
+| 源码 | `0b34718fb0f12ccb5bc9af6412b2e06a84293930` |
+| 结果 | 全部成功，4 个作业：`meta` → `build (amd64)` / `build (arm64)` → `merge` |
+| 耗时 | 约 4 分 30 秒（14:47:11 → 14:51:41 UTC）；amd64 作业用时较长（约 4 分 2 秒） |
+| 镜像 | `ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.2` |
+| 多架构 digest | `sha256:e919dc8e76b9e28305a034413c117ee63adb16a3e6f8ba1518d119682cb0a7b7` |
+| 可见性 | 匿名可拉（无需登录） |
+
+相对 `v0.7.1-custom.1` 的差异：新增 `fetchVideoContent()` 路由回退与可诊断错误文案。
+
+三个标签实测指向**同一个 digest**，可任选：
+
+| 标签 | 来源 | 说明 |
+|---|---|---|
+| `v0.7.1-custom.2` | `type=ref,event=tag` | **推荐固定使用这个** |
+| `0b34718` | `type=sha,prefix=` | 按提交哈希，便于溯源 |
+| `latest` | metadata-action 自动追加 | 每次构建都被覆盖，见第四节的纪律 |
+
+各层摘要。注意 `docker` 显示的"镜像 ID"会随**镜像存储后端**而异，见 5.1 节说明：
+
+| 层级 | 摘要 |
+|---|---|
+| 多架构 index（总清单） | `sha256:e919dc8e76b9e28305a034413c117ee63adb16a3e6f8ba1518d119682cb0a7b7` |
+| linux/amd64 子 manifest | `sha256:eac9525674785339b51bb5f39e2d2cf6030d638f20d487ba16aa892f3e6ab1a8` |
+| linux/amd64 config digest | `sha256:9af285171193fe155a137f689f6825cab47f14d99841dafa8ffdc02579f76aae` |
+| linux/arm64 子 manifest | `sha256:8253753215c4c4d978626c558febc21ee3d7eb800f83778a3177bd4938168523` |
+
+镜像内元数据（已核验，证明构建来源正确）：
+
+```
+org.opencontainers.image.revision = 0b34718fb0f12ccb5bc9af6412b2e06a84293930
+org.opencontainers.image.source   = https://github.com/joetop1/infinite-canvas
+org.opencontainers.image.version  = v0.7.1-custom.2
+```
 
 ### v0.7.1-custom.1 — 2026-09-21
 
