@@ -1,5 +1,32 @@
 # 部署说明（二次开发版）
 
+## 零、最短路径（TL;DR）
+
+本机数据已确认**可丢弃、可重建**，因此不需要任何数据保全措施，直接换镜像重建即可。三步：
+
+**1) 打标签，触发云端构建**
+
+```bash
+git push
+git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2
+```
+
+**2) 等 Actions 变绿**
+
+https://github.com/joetop1/infinite-canvas/actions —— 两个 `build` 作业并行跑（amd64 / arm64），随后一个 `merge` 作业把它们合成多架构清单。实测一次完整构建约 3 分 35 秒。
+
+**3) 宝塔面板「容器编排」里编辑配置，只改 `image` 一行**，并删掉 `build` 段与 `pull_policy: always`：
+
+```yaml
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.2
+```
+
+保存 → 重启容器。**反向代理配置不用动**（容器名与端口都未变）。
+
+**关于镜像仓库权限**：实测确认 `ghcr.io/joetop1/infinite-canvas` **匿名可拉**（包随公开仓库自动为 Public），不需要额外授权步骤。若哪天拉取报 401/403，见第四节的补救办法。
+
+> 为什么走 Actions 而不在服务器上构建：面板的 compose 存放在面板自己的目录，`build: context: .` 在那里没有源码和 Dockerfile，构建必然失败。原因详见第九节。
+
 ## 一、结论
 
 改动只发生在前端（`web/src/services/api/video.ts`），**后端代码一行未动**。
@@ -74,26 +101,50 @@ docker compose -f docker-compose.custom.yml logs -f --tail=50
 
 **构建失败不会影响正在运行的旧容器**——`--build` 先构建镜像，成功后才重建容器。所以这一步是安全的。
 
+> 本机不适用这条路：面板编排的 compose 不在仓库目录，且同机多个容器共存，`next build` 峰值 2–4 GB 内存会拖累邻居。见第九节。
+
 ## 四、方式 B：打 tag，让 GitHub Actions 构建镜像
 
-仓库自带上游的 `.github/workflows/docker-image.yml`（未改动），它在**推送 `v*` 标签**时自动构建 amd64 + arm64 多架构镜像，推到 `ghcr.io/joetop1/infinite-canvas`。这条路的构建跑在 GitHub 上，不占服务器资源。
+仓库自带上游的 `.github/workflows/docker-image.yml`（未改动），它在**推送 `v*` 标签**时自动构建 amd64 + arm64 多架构镜像，推到 `ghcr.io/joetop1/infinite-canvas`。构建跑在 GitHub 的机器上，不占服务器资源。
 
 ```bash
 git checkout custom && git pull
-git tag v0.7.1-custom.1
-git push origin v0.7.1-custom.1
+git tag v0.7.1-custom.2
+git push origin v0.7.1-custom.2
 ```
 
-注意：**标签要打在 `custom` 分支的 HEAD 上，且用新的标签名**。不要推送从上游同步下来的既有标签，那会构建上游的代码而不是你的。
+该工作流产出两个标签，指向同一个 digest：
 
-构建完成后（Actions 面板可见进度），服务器侧：
+| 标签 | 来源 | 说明 |
+|---|---|---|
+| `v0.7.1-custom.2` | `type=ref,event=tag` | 与 git 标签同名，**推荐固定使用这个** |
+| `<短 sha>`（如 `308647a`） | `type=sha,prefix=` | 按提交哈希，便于溯源 |
+| `latest` | metadata-action 的 `flavor: latest=auto` 自动追加 | **每次构建都会覆盖**，是把双刃剑，见下方警告 |
+
+### 两个必须守住的纪律
+
+**一、标签要打在 `custom` 分支的 HEAD 上，且用新的标签名。** 不要推送从上游同步下来的既有标签（`v0.4.5` … `v0.7.1`），那会构建**上游的代码**而不是你的。
+
+**二、不要用 `git push origin --tags` 或 `git push --tags`。** 本地存在上游的全部标签，整批推送会一次性触发多个构建，并把 `latest` 覆盖成上游版本。
+
+> **`latest` 的取舍**：因为 `latest` 每次构建都被覆盖，把面板的 `image` 写成 `:latest` 就能实现"推送即发布"——以后再也不必改面板配置，重启容器就自动拿到新版。代价是它同时会被**上游标签**的构建覆盖。所以：
+> - 想省事：用 `:latest`，但严守上面第二条纪律。
+> - 想稳妥：固定写版本号（如 `:v0.7.1-custom.2`），每次发布改一行 `image`。**默认推荐这个。**
+
+构建完成后（Actions 面板可见进度），服务器侧直接拉取即可：
 
 ```bash
-# 首次需要登录 ghcr.io（包默认是私有的），用带 read:packages 权限的 PAT
-echo <YOUR_PAT> | docker login ghcr.io -u joetop1 --password-stdin
-
 docker compose -f docker-compose.custom.yml pull
 docker compose -f docker-compose.custom.yml up -d
+```
+
+**关于是否需要 `docker login`**：实测 `ghcr.io/joetop1/infinite-canvas` 匿名可拉，无需登录。若哪天报 401/403（例如把包改成了私有、或换了仓库），二选一：
+
+```bash
+# 方案一：把包改回 Public（GitHub → 头像 → Your packages → infinite-canvas
+#         → Package settings → Change visibility → Public）
+# 方案二：用带 read:packages 权限的 PAT 登录
+echo <YOUR_PAT> | docker login ghcr.io -u joetop1 --password-stdin
 ```
 
 或者把 `docker-compose.custom.yml` 里的 `image` 换成 `ghcr.io/joetop1/infinite-canvas:<标签>`，删除 `build` 段。
@@ -128,8 +179,11 @@ docker compose -f docker-compose.yml up -d   # 回到上游官方镜像
 
 ```bash
 ./scripts/sync-upstream.sh                       # 合并上游新版到 custom
-docker compose -f docker-compose.custom.yml up -d --build
+git push                                         # 推代码
+git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2   # 触发构建（标签递增）
 ```
+
+等 Actions 变绿，再按第零节第 3 步重启容器。
 
 ## 八、多项目共存的主机上要注意什么
 
@@ -205,16 +259,17 @@ volumes:
   - ./data:/app/data
 ```
 
-`./data` 是相对于 **compose 文件所在目录**解析的，不是相对于你的仓库。所以：
+`./data` 是相对于 **compose 文件所在目录**解析的，不是相对于你的仓库。所以换一个目录跑 compose，`./data` 就指向另一个空目录，应用会以全新的空数据库启动。
 
-- **换一个目录跑 compose，`./data` 就指向另一个空目录，应用会以全新的空数据库启动**——画布项目、历史素材、渠道配置看起来全都没了（其实旧数据还在原处，只是没被挂载）。
-- 因此从命令行接管时，第一步永远是**先查清当前实际的挂载源路径**，再把新 compose 的 `volumes` 指向同一个绝对路径：
+**本机当前无数据（2026-09-21 确认），这个风险暂时不构成实际损失。** 但只要开始正常使用，画布项目、历史素材、渠道配置就会落在 `./data` 里，届时规则就变成硬的：
+
+- 从命令行接管时，第一步是**先查清当前实际的挂载源路径**，再把新 compose 的 `volumes` 指向同一个绝对路径：
 
 ```bash
 docker inspect infinite-canvas --format '{{range .Mounts}}{{.Type}}  {{.Source}}  ->  {{.Destination}}{{"\n"}}{{end}}'
 ```
 
-- 改配置时**不要动 `volumes` 和 `env_file`**，只动 `image`。这样路径不变，零数据风险。
+- 改配置时**不要动 `volumes` 和 `env_file`**，只动 `image`，路径不变即零数据风险。
 
 ### 3. 端口以容器实际映射为准
 
@@ -228,24 +283,21 @@ docker port infinite-canvas
 
 ### 推荐的操作序列（方式 B + 面板）
 
-即第零节的四步，这里展开细节。
+即第零节的三步，这里展开细节。
 
 1. 打标签，让 GitHub Actions 构建镜像：
 
 ```bash
-git tag v0.7.1-custom.1 && git push origin v0.7.1-custom.1
+git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2
 ```
 
-2. 等 Actions 跑完（仓库 Actions 面板可见进度，两个架构各一次构建）。
-3. 首次需要让服务器能拉到这个镜像。GHCR 的包**即使仓库是公开的，包本身也默认是私有的**，二选一：
-   - 在 GitHub → 头像 → Your packages → `infinite-canvas` → Package settings → 拉到底 Change visibility → 改为 Public（最简单，且符合 AGPL 派生作品公开的惯例）
-   - 或者配置面板的「仓库」凭据，或执行一次 `echo <PAT> | docker login ghcr.io -u joetop1 --password-stdin`（PAT 需 `read:packages`）
-4. 在面板的「容器编排」里编辑配置，把 `image` 换成自建镜像，**删掉 `build` 段与 `pull_policy: always`**，其余保持原样：
+2. 等 Actions 跑完（仓库 Actions 面板可见进度，两个架构各一次构建，最后合成多架构清单）。
+3. 在面板的「容器编排」里编辑配置，把 `image` 换成自建镜像，**删掉 `build` 段与 `pull_policy: always`**，其余保持原样：
 
 ```yaml
 services:
   app:
-    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.2
     container_name: infinite-canvas
     env_file:
       - .env
@@ -256,8 +308,45 @@ services:
     restart: unless-stopped
 ```
 
-5. 保存后点「更新镜像」或「重启」。此后面板的「更新镜像」按钮会去拉你自己的镜像，成为发布新版本的正常入口。
+4. 保存后点「更新镜像」或「重启」。此后面板的「更新镜像」按钮会去拉你自己的镜像，成为发布新版本的正常入口。
 
 ### 为什么必须删掉 `pull_policy: always`
 
 上游默认配置里那一行的作用是：每次启动都把 `image:` 指定的镜像重新拉一遍。而 `image:` 指向的是上游官方镜像 `ghcr.io/tigerowo/infinite-canvas:latest`。两者叠加的结果是——**只要面板重启过容器，二次开发的改动就会被上游最新版覆盖回去**，而且不会有任何提示。这是"我明明改了但没生效"的最常见原因。
+
+（删掉它之后仍有正常的拉取行为：当 `image:` 指定的标签本地不存在时，`docker compose up` 会自动去拉。所以换成版本号标签后不需要这一行。）
+
+## 十、构建记录
+
+### v0.7.1-custom.1 — 2026-09-21
+
+| 项目 | 值 |
+|---|---|
+| 触发 | 推送标签 `v0.7.1-custom.1`（`push` 事件） |
+| 运行 | [Actions run 35610027095](https://github.com/joetop1/infinite-canvas/actions/runs/35610027095) |
+| 源码 | `308647a548d9d69111f9764867064ab7ca524c23` |
+| 结果 | 全部成功，4 个作业：`meta` → `build (amd64)` / `build (arm64)` → `merge` |
+| 耗时 | 约 3 分 35 秒（14:07:31 → 14:11:06 UTC） |
+| 镜像 | `ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1` |
+| 多架构 digest | `sha256:ce57220a73910dcd72ba3ffbc404eedb2092ca9affd2afc7e548b4be1f4d47f8` |
+| 可见性 | 匿名可拉（HTTP 200），无需登录 |
+
+镜像内元数据（已核验，证明构建来源正确）：
+
+```
+org.opencontainers.image.revision = 308647a548d9d69111f9764867064ab7ca524c23
+org.opencontainers.image.source   = https://github.com/joetop1/infinite-canvas
+org.opencontainers.image.version  = v0.7.1-custom.1
+```
+
+验证包可见性的办法（不需要凭据）：
+
+```bash
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:joetop1/infinite-canvas:pull&service=ghcr.io" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json" \
+  "https://ghcr.io/v2/joetop1/infinite-canvas/manifests/latest"
+```
+
+返回 `200` = 公开可拉；`401`/`403` = 私有，需按第四节处理。
