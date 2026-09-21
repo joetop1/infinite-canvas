@@ -31,6 +31,8 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+    # 宿主机端口可覆盖：多项目共存的主机上 3000 常被别的服务占用。
+    # 在项目目录的 .env 里加一行 CANVAS_HOST_PORT=3100 即可换端口，容器内部始终是 3000。
     ports:
-      - "3000:3000"
+      - "${CANVAS_HOST_PORT:-3000}:3000"
     restart: unless-stopped

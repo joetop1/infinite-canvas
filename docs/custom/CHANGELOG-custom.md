@@ -55,7 +55,7 @@
 
 - **新增文件**：`docker-compose.custom.yml`、`docs/custom/DEPLOY.md`（均为新增，上游无同名文件，零冲突）
 - **原因**：上游 `docker-compose.yml` 使用 `image: ghcr.io/tigerowo/infinite-canvas:latest` + `pull_policy: always`，即**拉取上游官方镜像**。直接用它会带来两个问题：二次开发的改动根本不在运行中的镜像里；且每次 `up` 都会拉上游最新版，静默覆盖二次开发成果。
-- **做法**：新增与上游同构但改为源码构建的 compose 文件，保持相同的 `container_name` 与 `./data` 数据卷，可原地替换。详见 `docs/custom/DEPLOY.md`。
+- **做法**：新增与上游同构但改为源码构建的 compose 文件，保持相同的 `container_name` 与 `./data` 数据卷，可原地替换。宿主机端口改为 `${CANVAS_HOST_PORT:-3000}`，便于在多项目共存的主机上避开 3000 冲突。详见 `docs/custom/DEPLOY.md`。
 - **注意**：`.dockerignore` 中的 `docs2` 与 `data` 已被上游忽略；`docs/custom/` 不在忽略列表内，会进入构建上下文但不影响产物。
 
 ## 有意未改的上游文件

@@ -27,13 +27,24 @@
 | `docker-compose.custom.yml`（本仓库新增） | `infinite-canvas:custom`（源码构建） | 正确 |
 | `docker-compose.local.yml`（上游提供） | `infinite-canvas:local`（源码构建） | 也能用，但没有 `container_name`，容器名会变成 `<目录名>-app-1`；从官方 compose 切过来时需先停掉旧容器，否则占着 3000 端口 |
 
-查当前实际在跑哪个镜像：
+### 一段命令查清现状
+
+在服务器上执行（只读，不改任何东西）：
 
 ```bash
-docker ps --format '{{.Names}}\t{{.Image}}'
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
+echo "----- 画布容器是从哪个配置启起来的 -----"
+docker inspect infinite-canvas --format '镜像:    {{.Config.Image}}
+compose: {{index .Config.Labels "com.docker.compose.project.config_files"}}
+目录:    {{index .Config.Labels "com.docker.compose.project.working_dir"}}
+启动于:  {{.State.StartedAt}}' || echo "没有名为 infinite-canvas 的容器，用上面列表里的实际名字替换"
+echo "----- 本机资源（决定能否在本机构建） -----"
+echo "CPU 核心: $(nproc)"; free -h 2>/dev/null | head -2; df -h / | tail -1
 ```
 
-## 三、方式 A：在服务器上从源码构建（推荐，最直接）
+第二条最关键：`compose:` 会直接告诉你正在用的是 `docker-compose.yml` 还是别的文件；`目录:` 给你仓库的实际路径。有了这两个值，后面所有命令都能确定地写出来。
+
+## 三、方式 A：在服务器上从源码构建（最直接）
 
 前提：服务器上有本仓库的克隆，且 `origin` 指向你自己的仓库（不是上游）。
 
@@ -119,3 +130,57 @@ docker compose -f docker-compose.yml up -d   # 回到上游官方镜像
 ./scripts/sync-upstream.sh                       # 合并上游新版到 custom
 docker compose -f docker-compose.custom.yml up -d --build
 ```
+
+## 八、多项目共存的主机上要注意什么
+
+本机不止跑这一个容器时，下面几件事需要留意。
+
+### 端口
+
+画布容器内部固定监听 3000，宿主机侧端口可由 `CANVAS_HOST_PORT` 覆盖：
+
+```bash
+# 若 3000 已被别的服务占用，在项目目录的 .env 里加一行
+echo 'CANVAS_HOST_PORT=3100' >> .env
+```
+
+先看端口是否已被占用：
+
+```bash
+docker ps --filter "publish=3000" --format '{{.Names}}\t{{.Ports}}'
+ss -lntp 2>/dev/null | grep ':3000 ' || true
+```
+
+**只要容器名和端口都不变，反向代理（Nginx / Caddy / 宝塔）的配置就完全不用动。** 上游的 compose 与 `docker-compose.custom.yml` 用的都是 `container_name: infinite-canvas`，正是为了让这次替换对代理层透明。反过来，如果改用上游提供的 `docker-compose.local.yml`，容器名会变成 `<目录名>-app-1`，代理若按容器名解析就会断掉——这也是新增这个 compose 文件的原因。
+
+### 资源
+
+构建是本项目最吃资源的时刻，跑起来的运行占用反而不高。经验值：
+
+| 资源 | 建议下限 | 说明 |
+|---|---|---|
+| 内存 | 4 GB | `bun install` + `next build` 峰值 2–4 GB，低于 3 GB 容易在 next build 阶段被 OOM Kill |
+| 磁盘 | 15 GB 可用 | 三层构建缓存 + 镜像，构建完可 `docker builder prune` 回收 |
+| CPU | 2 核 | 单核也能构建，只是慢 |
+
+**如果服务器内存不足 4 GB，优先用第四节的「方式 B」让 GitHub Actions 构建镜像**，服务器只负责 `pull`，不承担构建开销。
+
+查看当前占用：
+
+```bash
+docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}'
+```
+
+### 清理空间时的坑
+
+不要用 `docker system prune -a`——它会连自建的 `infinite-canvas:custom` 镜像一起删掉，下次 `up` 就得重新构建。只清构建缓存：
+
+```bash
+docker builder prune -f --filter until=168h
+```
+
+### 香港节点的便利
+
+拉 Docker Hub、`ghcr.io`、以及从 GitHub `git clone` / `git pull` 通常都可直连，不需要配镜像加速或代理。这也是这台机器适合用「方式 A 在服务器上构建」的原因之一。
+
+如果服务器上装的是宝塔之类的面板，**建议仍用命令行执行 compose 命令**，避免面板把 compose 文件改写或另起一套容器管理逻辑，导致实际运行的东西和仓库里的文件不一致。
