@@ -304,9 +304,31 @@ services:
     volumes:
       - ./data:/app/data
     ports:
-      - "8081:3000"
+      - "8091:3000"
     restart: unless-stopped
 ```
+
+   面板里的**原始**内容（供逐行对照）：
+
+```yaml
+services:
+  app:
+    image: ghcr.io/tigerowo/infinite-canvas:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: always
+    container_name: infinite-canvas
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8091:3000"
+    restart: unless-stopped
+```
+
+   只有三处变化：`image:` 换值、**删掉 `build:` 整段（两行）**、**删掉 `pull_policy:`**。其余全部保持原样，**特别是 `ports` 必须是 `"8091:3000"`**——反向代理 `canvas.moirapis.com` 指向的是宿主机的 8091，改了这个端口域名立刻访问不通。
 
 4. 保存后点「更新镜像」或「重启」。此后面板的「更新镜像」按钮会去拉你自己的镜像，成为发布新版本的正常入口。
 
