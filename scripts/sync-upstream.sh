@@ -31,7 +31,7 @@ echo "起始分支：$start_branch"
 echo "-> 拉取 $REMOTE ..."
 git fetch "$REMOTE" --tags --prune
 
-echo "-> 更新 $BASE_BRANCH（仅允许快进）..."
+echo "-> 更新 ${BASE_BRANCH}（仅允许快进）..."
 git checkout "$BASE_BRANCH"
 git merge --ff-only "$REMOTE/$BASE_BRANCH"
 
@@ -45,4 +45,4 @@ if [ "$start_branch" != "$WORK_BRANCH" ]; then
 fi
 
 echo
-echo "完成。上游更新已并入 $WORK_BRANCH。"
+echo "完成。上游更新已并入 ${WORK_BRANCH}。"
