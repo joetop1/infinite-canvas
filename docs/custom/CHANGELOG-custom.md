@@ -3,7 +3,9 @@
 记录本仓库相对上游 [tigerowo/infinite-canvas](https://github.com/tigerowo/infinite-canvas) 的全部改动。
 上游更新合并时，先看本文件即可知道"哪些是自有改动"。
 
-验收指标：`git diff --stat upstream/main..custom` 的**删除行数应始终为 0**。一旦出现删除行，说明动了上游既有代码，需确认是否必要。
+验收口径见 `README.md` 第一节：`git diff --numstat upstream/main..custom` 的删除行，只允许是与新增行成对的行内改写。真正删掉上游代码即为违规。
+
+当前状态（`3 新增 / 1 删除`，删除的那 1 行是 `video.ts` 中被改写的 `if` 语句，与新版本成对）。
 
 ## 挂载点清单（改动上游文件的全部位置）
 
