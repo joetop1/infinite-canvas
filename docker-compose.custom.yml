@@ -1,0 +1,36 @@
+# [CUSTOM] 二次开发专用部署文件（新增文件，上游无此文件，永不冲突）。
+#
+# 与上游 docker-compose.yml 的两点关键区别：
+#   1) 从本仓库源码构建镜像，而不是拉上游官方镜像 ghcr.io/tigerowo/infinite-canvas
+#   2) 去掉了 pull_policy: always —— 保留它的后果是：每次 docker compose up
+#      都会去拉上游最新镜像，把二次开发的成果静默覆盖掉。
+#
+# 保持与上游一致的 container_name 与数据卷，因此可以原地替换，数据不受影响。
+#
+# 用法：
+#   docker compose -f docker-compose.custom.yml up -d --build
+#   docker compose -f docker-compose.custom.yml logs -f
+#
+# 首次从上游默认的 compose 切过来时，先停掉旧容器避免容器名/端口冲突：
+#   docker compose -f docker-compose.yml down
+
+services:
+  app:
+    # —— 方式 A：在服务器上从源码构建（默认） ——
+    image: infinite-canvas:custom
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # —— 方式 B：改用 GitHub Actions 构建好的镜像 ——
+    # 把上面两行（image + build）换成下面这行，并 docker compose pull 拉取：
+    # image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.1
+
+    container_name: infinite-canvas
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

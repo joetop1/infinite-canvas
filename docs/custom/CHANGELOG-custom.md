@@ -51,6 +51,13 @@
 - **为什么选标题与徽章之间**：徽章块（含 version 徽章）是上游的高频改动区，把声明插在它**之前**可与之结构分离，多数情况下 git 能自动合并；只有上游往同一位置插入内容时才会冲突，届时按"两边都保留"处理即可。
 - **内容**：声明本仓库为二次开发、给出上游地址与改造起始日期、声明沿用 AGPL-3.0-only，并链接到本台账。
 
+### 二次开发专用部署文件
+
+- **新增文件**：`docker-compose.custom.yml`、`docs/custom/DEPLOY.md`（均为新增，上游无同名文件，零冲突）
+- **原因**：上游 `docker-compose.yml` 使用 `image: ghcr.io/tigerowo/infinite-canvas:latest` + `pull_policy: always`，即**拉取上游官方镜像**。直接用它会带来两个问题：二次开发的改动根本不在运行中的镜像里；且每次 `up` 都会拉上游最新版，静默覆盖二次开发成果。
+- **做法**：新增与上游同构但改为源码构建的 compose 文件，保持相同的 `container_name` 与 `./data` 数据卷，可原地替换。详见 `docs/custom/DEPLOY.md`。
+- **注意**：`.dockerignore` 中的 `docs2` 与 `data` 已被上游忽略；`docs/custom/` 不在忽略列表内，会进入构建上下文但不影响产物。
+
 ## 有意未改的上游文件
 
 - `docs/progress/todo.md`、`docs/progress/pending-test.md`：项目约定要求每次变更同步更新，但这两个文件上游高频改动，属于必然冲突点。自有变更统一记在本文件，不改它们。
