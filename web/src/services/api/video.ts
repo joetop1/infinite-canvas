@@ -229,8 +229,10 @@ function isGrok2APIVideoConfig(config: AiConfig, model: string) {
 async function cacheProtectedVideo(config: AiConfig, model: string, task: VideoResponse) {
     const url = task.video_url || task.url || "";
     const needs88APIContent = videoChannelProtocol(config, model) === "88api" && !url;
+    // [CUSTOM] OpenAI 兼容渠道（new-api 等）完成任务时只返回 status/progress，视频需另取 /videos/{id}/content
+    const needsOpenAIContent = videoChannelProtocol(config, model) === "openai" && !url;
     const needsGrokContent = isGrok2APIVideoConfig(config, model) && /\/v1\/videos\/[^/]+\/content(?:[?#]|$)/.test(url);
-    if (!isCompletedVideoStatus(task.status) || task.storageKey || (!needs88APIContent && !needsGrokContent)) return task;
+    if (!isCompletedVideoStatus(task.status) || task.storageKey || (!needs88APIContent && !needsGrokContent && !needsOpenAIContent)) return task;
     const taskId = task.task_id || task.id || task.video_id || "";
     const response = await fetch(`${aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`)}?model=${encodeURIComponent(model)}`, { headers: aiHeaders(config) });
     if (!response.ok) throw new VideoRequestError(`视频内容下载失败：${response.status}`, task);
