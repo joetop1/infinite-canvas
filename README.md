@@ -4,6 +4,12 @@
 
 <h1 align="center">无限画布 (infinite-canvas)</h1>
 
+> **本仓库是二次开发版本**
+>
+> 基于 [tigerowo/infinite-canvas](https://github.com/tigerowo/infinite-canvas) 修改而来，自 2026-09-21 起进行改造。
+> 上游原项目版权归原作者所有，本仓库同样遵循 AGPL-3.0-only 协议。
+> 具体改动见[改造台账](docs/custom/CHANGELOG-custom.md)。
+
 <p align="center">
   <a href="https://github.com/tigerowo/infinite-canvas"><img src="https://img.shields.io/github/stars/tigerowo/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
   <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.7.1-2563eb?style=flat-square" alt="Version"></a>
