@@ -17,7 +17,7 @@ import (
 func TestModelProtocolRequestGoldens(t *testing.T) {
 	blockProtocolNetwork(t)
 	tests := []struct {
-		name, protocol, model, endpoint, body, want, uploads string
+		name, protocol, model, endpoint, url, body, want, uploads string
 	}{
 		{
 			name: "ark seedance", protocol: "ark", model: "doubao-seedance-2.0",
@@ -86,12 +86,16 @@ func TestModelProtocolRequestGoldens(t *testing.T) {
 		},
 		{
 			name: "kie upload metadata", protocol: "kie", model: "bytedance/seedance-2", endpoint: "/videos",
-			body:    `{"prompt":"scene","image":"https://direct-reference.invalid/run/image/0","video_reference":["https://direct-reference.invalid/run/video/0"],"audio_reference":["https://direct-reference.invalid/run/audio/0"]}`,
+			url:     "https://upstream.invalid/v1/jobs/createTask",
+			body:    `{"prompt":"scene","input_reference[]":["https://direct-reference.invalid/run/image/0","https://direct-reference.invalid/run/image/1"],"video_reference[]":["https://direct-reference.invalid/run/video/0"],"audio_reference[]":["https://direct-reference.invalid/run/audio/0"]}`,
+			want:    `{"model":"bytedance/seedance-2","input":{"prompt":"scene","reference_image_urls":["https://direct-reference.invalid/run/image/0","https://direct-reference.invalid/run/image/1"],"reference_video_urls":["https://direct-reference.invalid/run/video/0"],"reference_audio_urls":["https://direct-reference.invalid/run/audio/0"],"return_last_frame":false}}`,
 			uploads: `{"image":{"url":"https://kieai.redpandaai.co/api/file-stream-upload","fileField":"file","fileNameField":"fileName","extraFields":{"uploadPath":"images/user-uploads"},"responsePaths":["data.downloadUrl","data.fileUrl","data.url"]},"video":{"url":"https://kieai.redpandaai.co/api/file-stream-upload","fileField":"file","fileNameField":"fileName","extraFields":{"uploadPath":"videos/user-uploads"},"responsePaths":["data.downloadUrl","data.fileUrl","data.url"]},"audio":{"url":"https://kieai.redpandaai.co/api/file-stream-upload","fileField":"file","fileNameField":"fileName","extraFields":{"uploadPath":"audios/user-uploads"},"responsePaths":["data.downloadUrl","data.fileUrl","data.url"]}}`,
 		},
 		{
 			name: "apimart upload metadata", protocol: "apimart", model: "gpt-image-2-apimart", endpoint: "/images/edits",
-			body:    `{"prompt":"scene","image":"https://direct-reference.invalid/run/image/0"}`,
+			url:     "https://upstream.invalid/v1/images/generations",
+			body:    `{"prompt":"scene","image":["https://direct-reference.invalid/run/image/0","https://direct-reference.invalid/run/image/1"]}`,
+			want:    `{"model":"gpt-image-2-apimart","prompt":"scene","image_urls":["https://direct-reference.invalid/run/image/0","https://direct-reference.invalid/run/image/1"]}`,
 			uploads: `{"image":{"url":"https://upstream.invalid/v1/uploads/images","fileField":"file","responsePaths":["url"]}}`,
 		},
 	}
@@ -111,6 +115,9 @@ func TestModelProtocolRequestGoldens(t *testing.T) {
 			}
 			if plan.Provider != test.protocol || plan.ContentType != "application/json" {
 				t.Fatalf("unexpected direct plan: %#v", plan)
+			}
+			if test.url != "" && plan.URL != test.url {
+				t.Fatalf("got URL %q, want %q", plan.URL, test.url)
 			}
 			if test.want != "" {
 				assertProtocolJSONValue(t, plan.Body, test.want)
