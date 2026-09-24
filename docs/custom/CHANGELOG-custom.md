@@ -5,15 +5,26 @@
 
 验收口径见 `README.md` 第一节：`git diff --numstat upstream/main..custom` 的删除行，只允许是与新增行成对的行内改写。真正删掉上游代码即为违规。
 
-当前状态：**上游文件只有 2 个被改过**——
+当前状态：**上游文件共 11 个被改过**，其中 5 个只有新增行，6 个含"行内改写"性质的删除行——
 
-| 上游文件 | 新增 | 删除 |
-|---|---|---|
-| `README.md` | 6 | 0 |
-| `web/src/services/api/video.ts` | 23 | 4 |
+| 上游文件 | 新增 | 删除 | 性质 |
+|---|---|---|---|
+| `README.md` | 6 | 0 | 纯新增 |
+| `web/src/services/api/video.ts` | 23 | 4 | 4 行行内改写 |
+| `web/src/services/api/direct-ai.ts` | 12 | 4 | 4 行行内改写 |
+| `web/src/services/api/protocols/types.ts` | 3 | 1 | 1 行行内改写 |
+| `web/src/services/api/protocols/direct-registry.ts` | 4 | 0 | 纯新增 |
+| `web/src/services/api/protocols/direct-registry.test.ts` | 85 | 1 | 1 行行内改写 |
+| `web/src/lib/model-channel.ts` | 2 | 0 | 纯新增 |
+| `web/src/lib/model-channel.test.ts` | 9 | 1 | 1 行行内改写 |
+| `handler/model_protocol.go` | 36 | 0 | 纯新增 |
+| `handler/model_protocol_direct_test.go` | 84 | 0 | 纯新增 |
+| `service/model_protocol.go` | 54 | 8 | 8 行行内改写（7 行是 gofmt 对齐，1 行是列表加项） |
 
-4 行删除全部是**行内改写**（同一位置有新版本顶上），无一处是净删除：其中 1 行是 `cacheProtectedVideo` 的 `if` 判断，
-另外 3 行是把内联的 fetch/校验/上传三步收进新的 `fetchVideoContent()`，原始文件除这 4 行外其余一字未动。
+无一处是净删除。删除行分两类，都可逐行对照：
+
+- **go 常量块对齐**（`service/model_protocol.go` 7 行）：新增 `fal` / `replicate` 两个常量后 `gofmt` 重新对齐 `=` 号，原 7 个常量名一字未改。
+- **单行扩写**（其余 12 行）：`modelProtocolIDs` 列表加项、`pollURL` 签名加参数、`Authorization` 头改走新的 `directAuthorization()`、`response.ok` 判断兼容 202、`ark` 内联条件加上 `fal`、测试里的协议白名单加项。每一处都在同一位置有新版本顶上。
 
 ## 挂载点清单（改动上游文件的全部位置）
 
@@ -22,8 +33,82 @@
 | `README.md` | 标题与徽章之间 | 插入 6 行 AGPL §5(a) 修改声明（协议要求"显著"，故不能放文件末尾） |
 | `web/src/services/api/video.ts` | `cacheProtectedVideo()` | 追加 3 行（含 1 行注释），行内改写 1 行 |
 | `web/src/services/api/video.ts` | `cacheProtectedVideo()` 之下 | 新增独立函数 `fetchVideoContent()`（20 行，含注释与空行），行内改写 2 行 |
+| `web/src/services/api/direct-ai.ts` | `uploadAndReplaceReferences()` | 行内改写 1 行（内联条件加入 `provider === "fal"`），追加 1 行注释 |
+| `web/src/services/api/direct-ai.ts` | `requestDirectJSON()` | 行内改写 1 行（`Authorization` 改用 `directAuthorization()`），追加 3 行（202 容忍） |
+| `web/src/services/api/direct-ai.ts` | `requestDirectJSON()` 之下 | 新增独立函数 `directAuthorization()`（4 行） |
+| `web/src/services/api/direct-ai.ts` | `directPollURL()` | 行内改写 1 行（把模型名传给 `pollURL`） |
+| `web/src/services/api/protocols/types.ts` | `DirectProtocolAdapter` | 追加 `authorization?` 字段与注释；`pollURL` 签名增加可选 `model` 参数（行内改写 1 行） |
+| `web/src/services/api/protocols/direct-registry.ts` | 文件头 import 与注册表 | 追加 `fal` / `replicate` 两条（纯新增 4 行） |
+| `web/src/lib/model-channel.ts` | `modelChannelProtocols` 数组 | 追加 `fal` / `replicate` 两条协议项（纯新增 2 行） |
+| `handler/model_protocol.go` | `builtinAIProtocols` 表 | 追加 `fal` / `replicate` 两个适配器（纯新增 36 行，插在 `model:agnes` 之前） |
+| `service/model_protocol.go` | 常量块与 `init()` 注册表 | 追加 2 个协议常量、2 个 `modelProtocolIDs` 项、2 段注册逻辑（含 3 个新函数 `IsFalChannel` / `IsReplicateChannel` / `FalAuthorizationHeader`） |
+| 两个 `*_test.go` | 文件内追加用例 | 纯新增，未改任何既有断言（`direct-registry.test.ts` 有 1 行行内改写：协议白名单加项） |
+
+新增文件（上游不存在，零冲突）：`web/src/services/api/protocols/fal.ts`、
+`web/src/services/api/protocols/replicate.ts`、`handler/fal_request.go`、
+`handler/replicate_request.go`、`handler/direct_model_spec.go`、`docs/custom/FAL-REPLICATE.md`。
 
 ## 变更记录
+
+### 接入 Fal.ai / Replicate 渠道
+
+- **新增文件**：`web/src/services/api/protocols/fal.ts`、`web/src/services/api/protocols/replicate.ts`、
+  `handler/fal_request.go`、`handler/replicate_request.go`、`handler/direct_model_spec.go`、`docs/custom/FAL-REPLICATE.md`
+- **目标**：让画布能直接使用 Fal.ai 与 Replicate（用户自带 Key、浏览器直连平台），覆盖文生图、图生图、文/图生视频。
+
+- **为什么走"直连协议"这条路**：上游已有一套成熟的直连协议插槽——前端 `protocols/*.ts` 负责鉴权头、任务 ID、轮询与产物解析，
+  后端 `builtinAIProtocols` 负责提交地址与报文转译。Fal/Replicate 正好属于这一类（第三方平台 + 自带 Key），
+  因此**顺着插槽加两个协议**即可，不需要动 AI 代理、渠道管理、画布节点等任何既有逻辑。
+
+- **核心设计：模型专属参数走"模型名后的 query"**。这是本次最关键的一个判断。
+  两个平台每个模型的输入 schema 都不同（`flux/dev` 用 `image_size`、Kling 用 `aspect_ratio`+`duration`、
+  Replicate 上 `input_image` / `image_input` / `start_image` 三种写法并存），后端无法穷举。所以：
+
+  - 后端只映射**通用字段**：`prompt`、张数、宽高比、时长、参考素材字段；
+  - 其余参数通过模型名追加，如 `fal-ai/flux/dev?image_size=landscape_16_9&num_inference_steps=28`，
+    支持类型推断（`28`→数字、`true`→布尔）与 `?params={...}` 精确 JSON 两种写法；
+  - **query 参数的优先级最高**，可覆盖通用映射，用户始终有最终解释权；
+  - 参考素材字段名可用 `?image_field=` / `?image_field_plural=` 等**只作用于本地映射、不发给上游**的键覆盖。
+
+  这样既不用为每个模型写适配器，也不会因为猜错字段名而没有出路。
+
+- **平台差异（都在实现里处理掉了）**：
+
+  | 差异点 | Fal.ai | Replicate |
+  |---|---|---|
+  | 鉴权头 | `Authorization: Key <key>` | `Authorization: Bearer <key>` |
+  | 提交地址 | `POST {base}/{模型路径}` | 有 version → `/predictions`；无 → `/models/{o}/{n}/predictions` |
+  | 取结果 | `GET {base}/{模型路径}/requests/{id}/response` | `GET {base}/predictions/{id}` |
+  | 未完成的表示 | **HTTP 202 + 空体** | 200 + `status: starting/processing` |
+  | 结果结构 | 模型输出本体（`images[]` / `video` / `audio_url`） | `status` + `output` |
+  | 时长类型 | 字符串 `"5"` | 数字 `5`（Replicate 严格校验类型） |
+  | 本地参考素材 | 内联 data URI（fal 接受，无大小限制） | 先调 `POST /v1/files` 上传再传地址（官方文档：data URI 仅建议 1MB 以内） |
+
+- **为此在上游代码里加了 3 个扩展点**（都是最小改动，见"挂载点清单"）：
+
+  1. `DirectProtocolAdapter.authorization?(apiKey)` —— Fal 的 `Key ` 前缀需要自定义，
+     原有的 `rawAuthorization` 布尔开关只能表达"原样透传"。新增钩子后 `autodl`（透传）、
+     `kie`/`apimart`/`ark`（Bearer）行为完全不变。
+  2. `pollURL(baseUrl, taskId, model?)` —— Fal 的结果地址必须包含模型路径，原签名拿不到模型名。
+  3. `requestDirectJSON` 容忍 **202** —— 原先 `!response.ok` 一律抛错，会把 Fal 的"仍在排队"当成失败。
+
+- **有意做的取舍**：
+  - **不实现模型列表发现**。Fal 没有统一的模型列表接口；Replicate 的 `/v1/models` 虽然存在，
+    但未经验证的解析逻辑一旦出错会给出误导性结果。两家都改为返回一句**明确的提示文案**
+    （沿用上游 Ark Agent Plan 的既有做法），引导用户在"输入模型名称"里手填。
+  - **参考音频直接报错**，不静默丢弃。附了音频却悄悄不生效，比明确报错更难排查。
+  - 不映射 `quality` / `resolution_name` / `preset` 等平台间无统一名字的字段，需要就用 query 手动传。
+
+- **验证方式**（均已本地跑通）：
+  - `go vet ./...` 无输出；`go test ./...` 全绿（新增 13 个用例：9 组报文 golden + 6 组地址断言 + 1 组鉴权头）。
+  - `bun test` 的协议测试 **14 pass / 0 fail**。
+  - `bun run build`（Next.js 生产构建，含类型检查）**exit 0**。
+  - **真实上游调用仍需人工验证一次**（见 `FAL-REPLICATE.md` 第七节，建议先用 `fal-ai/flux/dev` 跑纯文生图）。
+
+- **过程中修掉的一个自造 bug**：fal 适配器里读取产物地址的 `outputURLs()` 在值为 `undefined` 时
+  `outputURLs(asRecord(undefined).url)` 会**无限尾递归**。因为 ESM 是严格模式、JavaScriptCore 实现了尾调用优化，
+  它不爆栈而是**把进程挂死**——上一轮 `bun test` 卡了 36 分钟就是这个原因（当时误以为是环境问题）。
+  已改为先判断 `"url" in record` 再递归。
 
 ### v0.7.1-custom.2 — 取内容路由回退 + 失败可诊断
 

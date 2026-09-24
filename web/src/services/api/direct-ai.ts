@@ -254,7 +254,8 @@ async function uploadAndReplaceReferences(protocol: DirectProtocolAdapter, plan:
     const uploaded = new Map<string, string>();
     await Promise.all(retained.map(async (reference) => {
         const spec = plan.uploads?.[reference.kind];
-        if (!spec && plan.provider === "ark" && reference.kind === "image") {
+        // [CUSTOM] Fal.ai 没有单步上传接口，改用 data URI 内联参考素材；ark 保持原有的图片内联行为
+        if (!spec && (plan.provider === "fal" || (plan.provider === "ark" && reference.kind === "image"))) {
             uploaded.set(reference.marker, await readFileAsDataUrl(reference.file));
             return;
         }
@@ -317,20 +318,27 @@ async function requestDirectJSON(protocol: DirectProtocolAdapter, url: string, a
         const response = await fetch(url, {
             method: body === undefined ? "GET" : "POST",
             headers: {
-                Authorization: protocol.rawAuthorization ? apiKey : `Bearer ${apiKey}`,
+                Authorization: directAuthorization(protocol, apiKey),
                 ...(body === undefined ? {} : { "Content-Type": contentType || "application/json" }),
             },
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             signal: controller.signal,
         });
         const payload = await readDirectResponse(response);
-        if (!response.ok) throw new Error(protocol.readError(payload) || `上游请求失败：${response.status}`);
+        // [CUSTOM] Fal 队列的结果端点未完成时返回 202 + 空体，属"仍在处理"而非失败。
+        const pending = body === undefined && response.status === 202;
+        if (!response.ok && !pending) throw new Error(protocol.readError(payload) || `上游请求失败：${response.status}`);
         const error = protocol.readError(payload);
         if (error) throw new Error(error);
         return payload;
     } finally {
         if (timeout) window.clearTimeout(timeout);
     }
+}
+
+function directAuthorization(protocol: DirectProtocolAdapter, apiKey: string) {
+    if (protocol.authorization) return protocol.authorization(apiKey);
+    return protocol.rawAuthorization ? apiKey : `Bearer ${apiKey}`;
 }
 
 async function readDirectResponse(response: Response): Promise<unknown> {
@@ -345,7 +353,7 @@ async function readDirectResponse(response: Response): Promise<unknown> {
 
 function directPollURL(config: AiConfig, protocol: DirectProtocolAdapter, taskId: string) {
     const channel = requireDirectChannel(config);
-    if (protocol.pollURL) return protocol.pollURL(channel.baseUrl, taskId);
+    if (protocol.pollURL) return protocol.pollURL(channel.baseUrl, taskId, config.model || config.videoModel);
     return buildApiUrl(channel.baseUrl, protocol.pollPath(taskId));
 }
 

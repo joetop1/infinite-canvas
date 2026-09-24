@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/tigerowo/infinite-canvas/service"
 )
 
 // Literal fixtures were derived from HEAD before introducing the registry.
@@ -94,6 +96,47 @@ func TestModelProtocolRequestGoldens(t *testing.T) {
 			body:    `{"prompt":"scene","image":"https://direct-reference.invalid/run/image/0"}`,
 			uploads: `{"image":{"url":"https://upstream.invalid/v1/uploads/images","fileField":"file","responsePaths":["url"]}}`,
 		},
+		{
+			name: "fal text to image keeps query params", protocol: "fal", model: "fal-ai/flux/dev?image_size=landscape_16_9&num_inference_steps=28", endpoint: "/images/generations",
+			body: `{"prompt":"scene","n":2,"size":"1024x1024"}`,
+			want: `{"prompt":"scene","num_images":2,"image_size":"landscape_16_9","num_inference_steps":28}`,
+		},
+		{
+			name: "fal image edit uses image_urls", protocol: "fal", model: "fal-ai/flux-pro/kontext", endpoint: "/images/edits",
+			body: `{"prompt":"scene","image":["https://direct-reference.invalid/run/image/0","https://direct-reference.invalid/run/image/1"]}`,
+			want: `{"prompt":"scene","image_urls":["https://direct-reference.invalid/run/image/0","https://direct-reference.invalid/run/image/1"]}`,
+		},
+		{
+			name: "fal video maps ratio and lets params win", protocol: "fal", model: "fal-ai/kling-video/v2.1/master/image-to-video?duration=10", endpoint: "/videos",
+			body: `{"prompt":"scene","seconds":"6","size":"1280x720","input_reference[]":["https://direct-reference.invalid/run/image/0"]}`,
+			want: `{"prompt":"scene","image_url":"https://direct-reference.invalid/run/image/0","aspect_ratio":"16:9","duration":10}`,
+		},
+		{
+			name: "fal numeric params coerce", protocol: "fal", model: "fal-ai/flux/dev?params={\"guidance_scale\":3.5,\"enable_safety\":false}", endpoint: "/images/generations",
+			body: `{"prompt":"scene"}`,
+			want: `{"prompt":"scene","guidance_scale":3.5,"enable_safety":false}`,
+		},
+		{
+			name: "replicate official model", protocol: "replicate", model: "black-forest-labs/flux-1.1-pro", endpoint: "/images/generations",
+			body: `{"prompt":"scene","n":2}`,
+			want: `{"input":{"prompt":"scene","num_outputs":2}}`,
+		},
+		{
+			name: "replicate version suffix", protocol: "replicate", model: "acme/thing:abc123", endpoint: "/videos",
+			body: `{"prompt":"scene","seconds":"5","size":"720x1280"}`,
+			want: `{"input":{"prompt":"scene","aspect_ratio":"9:16","duration":5},"version":"abc123"}`,
+		},
+		{
+			name: "replicate video start frame", protocol: "replicate", model: "kwaivgi/kling-v1.6-standard?image_field=start_image", endpoint: "/videos",
+			body:    `{"prompt":"scene","seconds":10,"size":"1920x1080","first_frame_url":"https://direct-reference.invalid/run/image/0"}`,
+			want:    `{"input":{"prompt":"scene","start_image":"https://direct-reference.invalid/run/image/0","aspect_ratio":"16:9","duration":10}}`,
+			uploads: `{"image":{"url":"https://upstream.invalid/v1/files","fileField":"content","responsePaths":["urls.get","url"]}}`,
+		},
+		{
+			name: "replicate upload metadata", protocol: "replicate", model: "acme/thing", endpoint: "/images/edits",
+			body:    `{"prompt":"scene","image":"https://direct-reference.invalid/run/image/0"}`,
+			uploads: `{"image":{"url":"https://upstream.invalid/v1/files","fileField":"content","responsePaths":["urls.get","url"]}}`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -125,6 +168,42 @@ func TestModelProtocolRequestGoldens(t *testing.T) {
 	}
 }
 
+func TestModelProtocolDirectPaths(t *testing.T) {
+	blockProtocolNetwork(t)
+	tests := []struct{ name, protocol, model, endpoint, want string }{
+		{"fal image", "fal", "fal-ai/flux/dev", "/images/generations", "https://upstream.invalid/fal-ai/flux/dev"},
+		{"fal image drops query", "fal", "fal-ai/flux/dev?image_size=landscape_16_9", "/images/generations", "https://upstream.invalid/fal-ai/flux/dev"},
+		{"fal nested video path", "fal", "fal-ai/kling-video/v2.1/master/text-to-video", "/videos", "https://upstream.invalid/fal-ai/kling-video/v2.1/master/text-to-video"},
+		{"replicate official model", "replicate", "black-forest-labs/flux-1.1-pro", "/images/generations", "https://upstream.invalid/v1/models/black-forest-labs/flux-1.1-pro/predictions"},
+		{"replicate version suffix", "replicate", "acme/thing:abc123", "/images/generations", "https://upstream.invalid/v1/predictions"},
+		{"replicate version query", "replicate", "acme/thing?version=abc123", "/videos", "https://upstream.invalid/v1/predictions"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan, err := prepareDirectAIRequest(directAIRequestInput{
+				Channel: directAIChannelInput{Protocol: test.protocol, BaseURL: "https://upstream.invalid"},
+				Model:   test.model, Endpoint: test.endpoint,
+				Body: map[string]any{"prompt": "scene"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.URL != test.want {
+				t.Fatalf("got url %q; want %q", plan.URL, test.want)
+			}
+		})
+	}
+}
+
+func TestModelProtocolFalAuthHeader(t *testing.T) {
+	cases := map[string]string{"": "", "key abc": "key abc", "Key abc": "Key abc", " abc ": "Key abc"}
+	for input, want := range cases {
+		if got := service.FalAuthorizationHeader(input); got != want {
+			t.Fatalf("FalAuthorizationHeader(%q) = %q; want %q", input, got, want)
+		}
+	}
+}
+
 func TestModelProtocolDirectSecurityContract(t *testing.T) {
 	blockProtocolNetwork(t)
 	tests := []struct {
@@ -142,6 +221,11 @@ func TestModelProtocolDirectSecurityContract(t *testing.T) {
 		{"kie required input", "kie", "", "kling-3.0-omni/image-to-video", "", map[string]any{"prompt": "scene"}, "KIE required input missing: image_urls"},
 		{"apimart required input", "apimart", "", "kling-v2-6-motion-control", "", map[string]any{"prompt": "scene"}, "motion-control 模型缺少参考图和参考视频"},
 		{"apimart video marker", "apimart", "", "doubao-seedance-2", "", map[string]any{"video_reference": []any{"https://direct-reference.invalid/run/video/0"}}, "APIMart 本地视频和音频参考暂不支持直传，请使用公网媒体地址"},
+		{"fal missing model path", "fal", "", "?image_size=landscape_16_9", "/images/generations", map[string]any{"prompt": "scene"}, "缺少 Fal 模型路径，请在模型名中填写如 fal-ai/flux/dev"},
+		{"fal rejects audio reference", "fal", "", "fal-ai/veo3", "/videos", map[string]any{"prompt": "scene", "audio_reference[]": []any{"https://direct-reference.invalid/run/audio/0"}}, "Fal 渠道暂不支持参考音频，请改用参考图片或参考视频"},
+		{"fal edit needs reference", "fal", "", "fal-ai/flux-pro/kontext", "/images/edits", map[string]any{"prompt": "scene"}, "Fal 图片编辑需要至少一张参考图"},
+		{"replicate invalid model name", "replicate", "", "justaname", "/images/generations", map[string]any{"prompt": "scene"}, "Replicate 模型名需为 owner/name 或 owner/name:version"},
+		{"replicate edit needs reference", "replicate", "", "acme/thing", "/images/edits", map[string]any{"prompt": "scene"}, "Replicate 图片编辑需要至少一张参考图"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

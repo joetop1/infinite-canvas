@@ -340,6 +340,42 @@ var builtinAIProtocols = []aiProtocolAdapter{
 		},
 	},
 	{
+		id:   service.ModelChannelProtocolFal,
+		path: func(channel model.ModelChannel, modelName string, path string) (string, bool) {
+			if !service.IsFalChannel(channel) {
+				return path, false
+			}
+			return falUpstreamPath(modelName, path)
+		},
+		prepare: prepareFalRequest,
+		uploads: func(model.ModelChannel, map[string]bool) (map[string]directAIUpload, error) {
+			// Fal 的模型输入普遍接受 data URI，本地参考素材直接内联，无需上传接口。
+			return nil, nil
+		},
+	},
+	{
+		id:   service.ModelChannelProtocolReplicate,
+		path: func(channel model.ModelChannel, modelName string, path string) (string, bool) {
+			if !service.IsReplicateChannel(channel) {
+				return path, false
+			}
+			return replicateUpstreamPath(modelName, path)
+		},
+		prepare: prepareReplicateRequest,
+		uploads: func(channel model.ModelChannel, kinds map[string]bool) (map[string]directAIUpload, error) {
+			// Replicate 的 data URL 只适用于 256KB 以内的文件，更大的参考素材需先上传到 Files 接口。
+			uploads := map[string]directAIUpload{}
+			for kind := range kinds {
+				uploads[kind] = directAIUpload{
+					URL:           service.BuildModelChannelURL(channel, "/files"),
+					FileField:     "content",
+					ResponsePaths: []string{"urls.get", "url"},
+				}
+			}
+			return uploads, nil
+		},
+	},
+	{
 		id: "model:agnes",
 		videoID: func(modelName string, id string) bool {
 			return isAgnesVideoModel(modelName) && strings.HasPrefix(id, "video_")

@@ -5,7 +5,7 @@ import { collectHTTPURLs, normalizeDirectStatus, readDirectError } from "./share
 
 // Expectations are taken from direct-ai.ts at a27f046, before protocol extraction.
 test("direct protocols preserve polling paths and task ID precedence", () => {
-    assert.deepEqual(Object.keys(directProtocolAdapters).sort(), ["apimart", "ark", "autodl", "kie"]);
+    assert.deepEqual(Object.keys(directProtocolAdapters).sort(), ["apimart", "ark", "autodl", "fal", "kie", "replicate"]);
     assert.equal(directProtocolAdapters.kie.pollPath("task/a b?"), "/jobs/recordInfo?taskId=task%2Fa%20b%3F");
     assert.equal(directProtocolAdapters.apimart.pollPath("task/a b?"), "/tasks/task%2Fa%20b%3F?language=zh");
     assert.equal(directProtocolAdapters.ark.pollPath("task/a b?"), "/contents/generations/tasks/task%2Fa%20b%3F");
@@ -154,4 +154,88 @@ test("AutoDL reports string business errors, task failures and completed tasks w
     assert.equal(protocol.readVideoPoll(empty, "task", "model").status, "failed");
     assert.match(protocol.readVideoPoll(empty, "task", "model").error?.message || "", /没有返回视频地址/);
     assert.match(protocol.readAudioPoll?.(empty).error || "", /没有返回音频地址/);
+});
+
+test("Fal uses Key auth, polls the queue result endpoint and never treats tracking URLs as outputs", () => {
+    const protocol = directProtocolAdapters.fal;
+    assert.equal(protocol.rawAuthorization, undefined);
+    assert.equal(protocol.authorization?.(" abcd "), "Key abcd");
+    assert.equal(protocol.authorization?.("Key abcd"), "Key abcd");
+    assert.equal(protocol.authorization?.("key abcd"), "key abcd");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/1", "fal-ai/flux/dev"), "https://queue.fal.run/fal-ai/flux/dev/requests/req%2F1/response");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run", "req", "fal-ai/flux/dev?image_size=square_hd"), "https://queue.fal.run/fal-ai/flux/dev/requests/req/response");
+    assert.throws(() => protocol.pollURL?.("https://queue.fal.run/", "req", ""), /模型/);
+    assert.throws(() => protocol.pollURL?.("https://queue.fal.run", "req"), /模型/);
+    assert.throws(() => protocol.pollPath("req"), /模型/);
+    assert.equal(protocol.readTaskId({ request_id: " req ", id: "ignored" }), "req");
+    assert.equal(protocol.readTaskId({}), "");
+    assert.deepEqual(protocol.readCreatedImageURLs?.({
+        request_id: "req",
+        status_url: "https://queue.fal.run/fal-ai/flux/dev/requests/req/status",
+        response_url: "https://queue.fal.run/fal-ai/flux/dev/requests/req/response",
+    }), []);
+    assert.equal(protocol.readCreatedVideoStatus({ status: "IN_QUEUE" }), "processing");
+    assert.equal(protocol.readCreatedVideoStatus({ status: "COMPLETED" }), "completed");
+});
+
+test("Fal reads images, video and audio from the model output fields only", () => {
+    const protocol = directProtocolAdapters.fal;
+    assert.deepEqual(protocol.readImagePoll({ images: [{ url: " https://media.example/one.png " }, { url: "https://media.example/one.png" }] }), {
+        urls: ["https://media.example/one.png"], done: true, error: "",
+    });
+    assert.deepEqual(protocol.readImagePoll({}), { urls: [], done: false, error: "" });
+    assert.deepEqual(protocol.readImagePoll({ status: "IN_PROGRESS" }), { urls: [], done: false, error: "" });
+    assert.deepEqual(protocol.readImagePoll({ status: "FAILED", detail: "boom" }), { urls: [], done: false, error: "boom" });
+    assert.deepEqual(protocol.readVideoPoll({ video: { url: "https://media.example/out.mp4" } }, "req", "fal-ai/kling-video"), {
+        id: "req", task_id: "req", status: "completed",
+        video_url: "https://media.example/out.mp4", url: "https://media.example/out.mp4", model: "fal-ai/kling-video",
+    });
+    assert.deepEqual(protocol.readVideoPoll({}, "req", "model-x"), { id: "req", task_id: "req", status: "processing", model: "model-x" });
+    assert.deepEqual(protocol.readVideoPoll({ error: "boom" }, "req", "model-x"), {
+        id: "req", task_id: "req", status: "failed", error: { message: "boom" }, model: "model-x",
+    });
+    assert.deepEqual(protocol.readVideoPoll({ videos: [{ url: "https://media.example/first.mp4" }, { url: "https://media.example/second.mp4" }] }, "req", "model-x"), {
+        id: "req", task_id: "req", status: "completed",
+        video_url: "https://media.example/first.mp4", url: "https://media.example/first.mp4", model: "model-x",
+    });
+    assert.deepEqual(protocol.readAudioPoll?.({ audio_url: "https://media.example/speech.mp3" }), {
+        url: "https://media.example/speech.mp3", done: true, error: "",
+    });
+});
+
+test("Fal surfaces detail arrays, error types and keeps the shared business error contract", () => {
+    const protocol = directProtocolAdapters.fal;
+    assert.equal(protocol.readError({ code: 500 }), "上游请求失败：500");
+    assert.equal(protocol.readError({ detail: " Invalid API key " }), "Invalid API key");
+    assert.equal(protocol.readError({ detail: [{ msg: "first" }, { message: "second" }] }), "first；second");
+    assert.equal(protocol.readError({ error_type: "content_policy_violation" }), "content_policy_violation");
+    assert.equal(protocol.readError({}), "");
+});
+
+test("Replicate polls predictions and reads outputs from the output field only", () => {
+    const protocol = directProtocolAdapters.replicate;
+    assert.equal(protocol.rawAuthorization, undefined);
+    assert.equal(protocol.pollPath("id/a b?"), "/predictions/id%2Fa%20b%3F");
+    assert.equal(protocol.readTaskId({ id: " pred-1 ", urls: { get: "https://api.replicate.com/v1/predictions/pred-1" } }), "pred-1");
+    assert.deepEqual(protocol.readCreatedImageURLs?.({
+        id: "pred-1", status: "starting", urls: { get: "https://api.replicate.com/v1/predictions/pred-1" },
+    }) || [], []);
+    assert.equal(protocol.readCreatedVideoStatus({ status: "starting" }), "processing");
+    assert.deepEqual(protocol.readImagePoll({ id: "pred-1", status: "starting" }), { urls: [], done: false, error: "" });
+    assert.deepEqual(protocol.readImagePoll({
+        status: "succeeded",
+        output: ["https://media.example/a.png", "https://media.example/a.png", { url: "https://media.example/b.png" }],
+    }), { urls: ["https://media.example/a.png", "https://media.example/b.png"], done: true, error: "" });
+    assert.deepEqual(protocol.readImagePoll({ status: "failed", error: "nsfw" }), { urls: [], done: false, error: "nsfw" });
+    assert.deepEqual(protocol.readVideoPoll({ id: "pred-1", status: "succeeded", output: "https://media.example/out.mp4" }, "fallback", "model-x"), {
+        id: "pred-1", task_id: "pred-1", status: "completed",
+        video_url: "https://media.example/out.mp4", url: "https://media.example/out.mp4", model: "model-x",
+    });
+    assert.deepEqual(protocol.readVideoPoll({ id: "pred-2", status: "canceled", error: null }, "pred-2", "model-x"), {
+        id: "pred-2", task_id: "pred-2", status: "failed",
+        error: { message: "Replicate 视频生成失败" }, model: "model-x",
+    });
+    assert.equal(protocol.readError({ detail: "Request was throttled." }), "Request was throttled.");
+    assert.equal(protocol.readError({ error: "prediction failed" }), "prediction failed");
+    assert.equal(protocol.readError({ code: 500 }), "上游请求失败：500");
 });

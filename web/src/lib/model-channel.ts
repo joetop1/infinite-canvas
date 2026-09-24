@@ -8,6 +8,8 @@ export const modelChannelProtocols = [
     { value: "kie", label: "KIE", baseUrl: "https://api.kie.ai/api/v1", directRequestPlan: true },
     { value: "autodl", label: "AutoDL", baseUrl: "https://autodl.art", directRequestPlan: true },
     { value: "ark", label: "火山方舟", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", directRequestPlan: true },
+    { value: "fal", label: "Fal.ai", baseUrl: "https://queue.fal.run", apiKeyUrl: "https://fal.ai/dashboard/keys", directRequestPlan: true },
+    { value: "replicate", label: "Replicate", baseUrl: "https://api.replicate.com/v1", apiKeyUrl: "https://replicate.com/account/api-tokens", directRequestPlan: true },
     { value: "mimo", label: "MiMo", baseUrl: "https://api.xiaomimimo.com", apiKeyUrl: "https://platform.xiaomimimo.com/?ref=JFZQR2" },
 ] as const;
 

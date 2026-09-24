@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	ModelChannelProtocolOpenAI   = "openai"
-	ModelChannelProtocolGrok2API = "grok2api"
-	ModelChannelProtocolAPIMart  = "apimart"
-	ModelChannelProtocolKIE      = "kie"
-	ModelChannelProtocol88API    = "88api"
-	ModelChannelProtocolAutoDL   = "autodl"
-	ModelChannelProtocolArk      = "ark"
+	ModelChannelProtocolOpenAI    = "openai"
+	ModelChannelProtocolGrok2API  = "grok2api"
+	ModelChannelProtocolAPIMart   = "apimart"
+	ModelChannelProtocolKIE       = "kie"
+	ModelChannelProtocol88API     = "88api"
+	ModelChannelProtocolAutoDL    = "autodl"
+	ModelChannelProtocolArk       = "ark"
+	ModelChannelProtocolFal       = "fal"
+	ModelChannelProtocolReplicate = "replicate"
 )
 
 type modelProtocolAdapter struct {
@@ -31,7 +33,7 @@ type modelProtocolRule struct {
 }
 
 var modelProtocolRegistry map[string]modelProtocolAdapter
-var modelProtocolIDs = []string{ModelChannelProtocolOpenAI, ModelChannelProtocolGemini, ModelChannelProtocolGrok2API, ModelChannelProtocolMiniMax, ModelChannelProtocolAPIMart, ModelChannelProtocolKIE, ModelChannelProtocolMiMo, ModelChannelProtocol88API, ModelChannelProtocolAutoDL, ModelChannelProtocolArk}
+var modelProtocolIDs = []string{ModelChannelProtocolOpenAI, ModelChannelProtocolGemini, ModelChannelProtocolGrok2API, ModelChannelProtocolMiniMax, ModelChannelProtocolAPIMart, ModelChannelProtocolKIE, ModelChannelProtocolMiMo, ModelChannelProtocol88API, ModelChannelProtocolAutoDL, ModelChannelProtocolArk, ModelChannelProtocolFal, ModelChannelProtocolReplicate}
 
 func init() {
 	compatible := modelProtocolAdapter{
@@ -112,6 +114,33 @@ func init() {
 	ark := compatible
 	ark.testModel = testArkSeedanceChannelModel
 	modelProtocolRegistry[ModelChannelProtocolArk] = ark
+
+	// [CUSTOM] Fal.ai：提交与取结果都在队列域名下，且鉴权前缀是 `Key ` 而非 `Bearer `。
+	fal := compatible
+	fal.buildURL = func(channel model.ModelChannel, path string) string {
+		return normalizeModelChannelBaseURL(channel.BaseURL) + path
+	}
+	fal.setAuth = func(request *http.Request, channel model.ModelChannel) {
+		request.Header.Set("Authorization", FalAuthorizationHeader(channel.APIKey))
+	}
+	fal.models = func(model.ModelChannel) ([]string, error) {
+		return nil, safeMessageError{message: "Fal.ai 没有统一的模型列表接口，请手动填写模型路径（如 fal-ai/flux/dev），模型专属参数可用 ?key=value 追加。"}
+	}
+	fal.testModel = func(model.ModelChannel, string) (string, error) {
+		return "Fal.ai 模型请在图片或视频创作台发起一次生成验证。", nil
+	}
+	modelProtocolRegistry[ModelChannelProtocolFal] = fal
+
+	// [CUSTOM] Replicate：官方模型与社区模型的创建地址不同，由 handler 层按 version 决定；
+	// 地址沿用 OpenAI 的 /v1 归一化逻辑（默认 baseUrl 已带 /v1）。
+	replicate := compatible
+	replicate.models = func(model.ModelChannel) ([]string, error) {
+		return nil, safeMessageError{message: "Replicate 模型请在模型列表中手动填写，格式为 owner/name，非官方模型还需版本号（owner/name:versionhash 或 ?version=hash）。"}
+	}
+	replicate.testModel = func(model.ModelChannel, string) (string, error) {
+		return "Replicate 模型请在图片或视频创作台发起一次生成验证。", nil
+	}
+	modelProtocolRegistry[ModelChannelProtocolReplicate] = replicate
 	glm := compatible
 	glm.testModel = testGLMTTSChannelModel
 	modelProtocolRegistry["model:glm-tts"] = glm
@@ -160,6 +189,23 @@ func modelProtocolForChannel(channel model.ModelChannel) modelProtocolAdapter {
 
 func IsArkChannel(channel model.ModelChannel) bool {
 	return strings.EqualFold(strings.TrimSpace(channel.Protocol), ModelChannelProtocolArk)
+}
+
+func IsFalChannel(channel model.ModelChannel) bool {
+	return strings.EqualFold(strings.TrimSpace(channel.Protocol), ModelChannelProtocolFal)
+}
+
+func IsReplicateChannel(channel model.ModelChannel) bool {
+	return strings.EqualFold(strings.TrimSpace(channel.Protocol), ModelChannelProtocolReplicate)
+}
+
+// FalAuthorizationHeader 统一 Fal 的鉴权头前缀；用户已写成 `Key xxx` 时不再重复添加。
+func FalAuthorizationHeader(apiKey string) string {
+	key := strings.TrimSpace(apiKey)
+	if strings.HasPrefix(strings.ToLower(key), "key ") || key == "" {
+		return key
+	}
+	return "Key " + key
 }
 
 func matchModelProtocol(rules []modelProtocolRule, channel model.ModelChannel, modelName string) (modelProtocolAdapter, bool) {

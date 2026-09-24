@@ -13,6 +13,8 @@ test("built-in protocol options retain both settings panels' labels and order", 
         { label: "KIE", value: "kie" },
         { label: "AutoDL", value: "autodl" },
         { label: "火山方舟", value: "ark" },
+        { label: "Fal.ai", value: "fal" },
+        { label: "Replicate", value: "replicate" },
         { label: "MiMo", value: "mimo" },
     ]);
 });
@@ -27,12 +29,16 @@ test("built-in protocols retain all existing default URLs and API Key links", ()
         kie: "https://api.kie.ai/api/v1",
         autodl: "https://autodl.art",
         ark: "https://ark.cn-beijing.volces.com/api/v3",
+        fal: "https://queue.fal.run",
+        replicate: "https://api.replicate.com/v1",
         mimo: "https://api.xiaomimimo.com",
         "88api": "https://88api.ai/v1",
     });
     assert.deepEqual(modelChannelApiKeyUrls, {
         metaso: "https://metaso.cn/minimax-h3/?s=tt",
         apimart: "https://apimart.ai/register?aff=fWMrEv",
+        fal: "https://fal.ai/dashboard/keys",
+        replicate: "https://replicate.com/account/api-tokens",
         mimo: "https://platform.xiaomimimo.com/?ref=JFZQR2",
         "88api": "https://88api.ai/sign-up?aff=25ty",
     });
@@ -43,7 +49,9 @@ test("public parameter translation eligibility keeps exact protocol matching", (
     assert.equal(directAIProviderForProtocol("apimart"), "apimart");
     assert.equal(directAIProviderForProtocol("autodl"), "autodl");
     assert.equal(directAIProviderForProtocol("ark"), "ark");
-    for (const protocol of ["openai", "gemini", "grok2api", "metaso", "mimo", "88api", "KIE", " kie ", "APIMart", "ARK", " ark ", "", "unknown"]) {
+    assert.equal(directAIProviderForProtocol("fal"), "fal");
+    assert.equal(directAIProviderForProtocol("replicate"), "replicate");
+    for (const protocol of ["openai", "gemini", "grok2api", "metaso", "mimo", "88api", "KIE", " kie ", "APIMart", "ARK", " ark ", "FAL", " fal ", "Replicate", "", "unknown"]) {
         assert.equal(directAIProviderForProtocol(protocol), null, protocol);
     }
 });
