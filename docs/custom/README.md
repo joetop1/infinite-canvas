@@ -34,28 +34,63 @@ git diff --numstat upstream/main..custom
 
 ## 三、挂载点清单
 
-以下是唯一允许改动上游文件的位置。改动时统一加注释标记 `[CUSTOM]`，方便合并冲突时快速识别。
+以下是**全部**允许改动上游文件的位置，由 `docs/custom/CHANGELOG-custom.md` 的统计表逐行核对。
+改动时统一加注释标记 `[CUSTOM]`，方便合并冲突时快速识别。
 
-| 上游文件 | 允许的改动 | 备注 |
+| 上游文件 | 允许的改动 | 规模 |
 | --- | --- | --- |
-| `router/router.go` | 末尾追加自有模块注册，如 `custom.Register(v1)` | 一行 |
-| `main.go` | 初始化自有模块 | 2–3 行 |
-| `repository/db.go` | `AutoMigrate(...)` 参数中追加自有 model | 仅在新增数据表时需要 |
-| `web/src/constant/navigation-tools.ts` | 数组末尾追加菜单对象 | 导航为数据驱动，追加后桌面端与移动端同时生效 |
+| `README.md` | 标题与徽章之间插入 AGPL §5(a) 修改声明 | 6 行 |
+| `router/router.go` | 末尾追加自有模块注册，如 `custom.Register(v1)` | 一行（暂未使用） |
+| `main.go` | 初始化自有模块 | 2–3 行（暂未使用） |
+| `repository/db.go` | `AutoMigrate(...)` 参数中追加自有 model | 仅新增数据表时（暂未使用） |
+| `web/src/constant/navigation-tools.ts` | 数组末尾追加菜单对象 | 暂未使用 |
 | `web/src/app/(user)/layout.tsx` | 仅在需要登录态初始化时改动 | 通常无需改动 |
-| `web/src/services/api/video.ts` | `cacheProtectedVideo()` 中的取回分支 | 扩展「完成后另取 `/videos/{id}/content`」的协议判断，见 `CHANGELOG-custom.md` |
+| `web/src/services/api/video.ts` | `cacheProtectedVideo()` 的取回分支 + 新函数 `fetchVideoContent()` | 23 增 / 4 改 |
+| `web/src/services/api/direct-ai.ts` | `authorization` 钩子、202 容忍、Fal 参考素材内联、`pollURL` 传模型名 | 12 增 / 4 改 |
+| `web/src/services/api/protocols/types.ts` | `DirectProtocolAdapter` 加 `authorization?`、`pollURL` 加 `model?` | 3 增 / 1 改 |
+| `web/src/services/api/protocols/direct-registry.ts` | 注册表追加 `fal` / `replicate` | 4 行 |
+| `web/src/lib/model-channel.ts` | `modelChannelProtocols` 追加两个协议项 | 2 行 |
+| `handler/model_protocol.go` | `builtinAIProtocols` 追加 `fal` / `replicate` 适配器 | 36 行 |
+| `service/model_protocol.go` | 2 个协议常量、`modelProtocolIDs` 加项、注册逻辑与 3 个新函数 | 54 增 / 8 改 |
+| `web/src/lib/model-channel.test.ts`、`web/src/services/api/protocols/direct-registry.test.ts`、`handler/model_protocol_direct_test.go` | 断言表追加用例（不改既有断言） | — |
 
 **除以上文件外，任何上游文件都不应出现自有改动。** 若发现必须新增挂载点，先在本文件登记，再动手。
+
+> 边界口径：**「改上游文件」指改动已有内容**。在上游目录里**新建**文件（如
+> `web/src/services/api/protocols/fal.ts`）不算改上游文件——它不会与上游冲突，
+> 详见下一节的例外说明。
 
 ## 四、自有代码目录约定
 
 | 位置 | 用途 |
 | --- | --- |
-| `custom/` | 后端自有 Go 代码（handler / service / repository / model） |
+| `custom/` | 后端自有 Go 代码（独立包，如自有 handler / service / model） |
 | `web/src/app/(user)/<自有页面>/` | 前端自有页面（App Router 新增目录即新增路由） |
 | `web/src/services/api/<自有模块>.ts` | 前端自有 API 封装 |
 | `docs/custom/` | 本约定及相关文档 |
 | `scripts/` | 自有脚本 |
+
+### 例外：需要复用上游非导出符号时，新文件必须落在上游目录
+
+Go 的可见性按**包**划分，`custom/` 是另一个包，读不到 `handler` 里的非导出符号
+（`aiProtocolRequest`、`directAIUpload`、`directAIReferenceKind` 等）。协议适配器的本质
+就是"往上游的协议表里加条目"，必须同包，因此：
+
+| 新文件 | 为什么要放在上游目录 |
+| --- | --- |
+| `handler/fal_request.go`、`handler/replicate_request.go`、`handler/direct_model_spec.go` | 需要 `package handler` 的非导出类型与函数 |
+| `web/src/services/api/protocols/fal.ts`、`replicate.ts` | 需要被 `direct-registry.ts` 以相对路径注册，且要与同目录既有适配器共用 `shared.ts` |
+
+**这类文件全是新增文件，不构成冲突面**，可以直接 `git merge` 过去；
+真正需要人工处理冲突的只有上表的挂载点。这也是为什么台账要分"改动行数"与"新增文件"两栏。
+
+## 四之二、功能文档
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/custom/CHANGELOG-custom.md` | 改造台账：改了什么、为什么这么改（合并冲突时的权威依据） |
+| `docs/custom/DEPLOY.md` | 部署到自有服务器（宝塔面板 + GHCR 镜像） |
+| `docs/custom/FAL-REPLICATE.md` | Fal.ai / Replicate 渠道的使用说明与字段映射表 |
 
 ## 五、日常同步流程
 

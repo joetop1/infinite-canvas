@@ -96,6 +96,12 @@ kwaivgi/kling-v1.6-standard?image_field=start_image&duration=10
 `video_generate_audio` 等）会被丢弃——因为它们在两个平台上没有统一名字。
 需要就用 query 手动传，例如 `?resolution=1080p`。
 
+> ⚠️ **注意：图片尺寸（画布的宽高比选择）不会自动传给上游。**
+> Fal 的图片模型习惯用 `image_size` 枚举（`landscape_16_9` / `square_hd` / `portrait_4_3`…），
+> Replicate 则各模型不同，猜错字段名会让整个请求 422。所以**图片接口不做尺寸映射**，
+> 请用 query 明确指定：`fal-ai/flux/dev?image_size=landscape_16_9`。
+> 视频接口的尺寸会被折成 `aspect_ratio`（如 `16:9`），因为这一项在两个平台都比较一致。
+
 ### 字段名不对怎么办
 
 参考素材的字段名可以用 query 覆盖，覆盖键本身**不会**发给上游：
