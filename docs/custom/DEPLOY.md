@@ -8,7 +8,7 @@
 
 ```bash
 git push
-git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3
+git tag v0.7.1-custom.4 && git push origin v0.7.1-custom.4
 ```
 
 **2) 等 Actions 变绿**
@@ -18,7 +18,7 @@ https://github.com/joetop1/infinite-canvas/actions —— 两个 `build` 作业�
 **3) 宝塔面板「容器编排」里编辑配置，只改 `image` 一行**，并删掉 `build` 段与 `pull_policy: always`：
 
 ```yaml
-    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.3
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.4
 ```
 
 保存 → 重启容器。**反向代理配置不用动**（容器名与端口都未变）。
@@ -109,15 +109,15 @@ docker compose -f docker-compose.custom.yml logs -f --tail=50
 
 ```bash
 git checkout custom && git pull
-git tag v0.7.1-custom.3
-git push origin v0.7.1-custom.3
+git tag v0.7.1-custom.4
+git push origin v0.7.1-custom.4
 ```
 
 该工作流产出两个标签，指向同一个 digest：
 
 | 标签 | 来源 | 说明 |
 |---|---|---|
-| `v0.7.1-custom.3` | `type=ref,event=tag` | 与 git 标签同名，**推荐固定使用这个** |
+| `v0.7.1-custom.4` | `type=ref,event=tag` | 与 git 标签同名，**推荐固定使用这个** |
 | `<短 sha>`（如 `d13cff2`） | `type=sha,prefix=` | 按提交哈希，便于溯源 |
 | `latest` | metadata-action 的 `flavor: latest=auto` 自动追加 | **每次构建都会覆盖**，是把双刃剑，见下方警告 |
 
@@ -214,7 +214,7 @@ docker image inspect ghcr.io/joetop1/infinite-canvas:$TAG \
 > 分不清是路由没实现还是文件被清。要判断路由是否存在，**用一条刚建的新任务**，
 > 或用一个格式合法但不存在的假 ID——后者的 404 一定是"路由或任务不存在"，与过期无关。
 
-### 5.3 Fal.ai / Replicate 渠道验证（`v0.7.1-custom.3` 起）
+### 5.3 Fal.ai / Replicate 渠道验证（`v0.7.1-custom.4` 起）
 
 这两个平台**不需要重建镜像就能验证通不通**，因为它不走画布后端代理：
 请求由浏览器直连平台，画布后端只提供参数转译。所以先在界面上把渠道建好再测一次生成。
@@ -254,7 +254,7 @@ docker compose -f docker-compose.yml up -d   # 回到上游官方镜像
 ```bash
 ./scripts/sync-upstream.sh                       # 合并上游新版到 custom
 git push                                         # 推代码
-git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3   # 触发构建（标签递增）
+git tag v0.7.1-custom.4 && git push origin v0.7.1-custom.4   # 触发构建（标签递增）
 ```
 
 等 Actions 变绿，再按第零节第 3 步重启容器。
@@ -362,7 +362,7 @@ docker port infinite-canvas
 1. 打标签，让 GitHub Actions 构建镜像：
 
 ```bash
-git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3
+git tag v0.7.1-custom.4 && git push origin v0.7.1-custom.4
 ```
 
 2. 等 Actions 跑完（仓库 Actions 面板可见进度，两个架构各一次构建，最后合成多架构清单）。
@@ -371,7 +371,7 @@ git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3
 ```yaml
 services:
   app:
-    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.3
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.4
     container_name: infinite-canvas
     env_file:
       - .env
@@ -419,7 +419,7 @@ services:
 想查**任意标签**的实际摘要（只读，不需要任何凭据）：
 
 ```bash
-TAG=v0.7.1-custom.3
+TAG=v0.7.1-custom.4
 TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:joetop1/infinite-canvas:pull&service=ghcr.io" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
 curl -sI -H "Authorization: Bearer $TOKEN" \
@@ -427,6 +427,30 @@ curl -sI -H "Authorization: Bearer $TOKEN" \
   "https://ghcr.io/v2/joetop1/infinite-canvas/manifests/$TAG" \
   | grep -i docker-content-digest
 ```
+
+### v0.7.1-custom.4 — 2026-09-24
+
+| 项目 | 值 |
+|---|---|
+| 触发 | 推送标签 `v0.7.1-custom.4`（`push` 事件） |
+| 运行 | [Actions run 35954889660](https://github.com/joetop1/infinite-canvas/actions/runs/35954889660) |
+| 源码 | `330e4f1997fe34199b9e278145f238129dc5a40a` |
+| 结果 | 成功，4 个作业：`meta` → `build (amd64)` / `build (arm64)` → `merge` |
+| 镜像 | `ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.4` |
+| 多架构 digest | `sha256:4a572eb386a940b2aff6378cf13464e2e110148557e8f77e4ec4b332ff22f157` |
+| amd64 manifest | `sha256:a8d5168061990d934abd9fb888a8609163affedf3beee532ac19d182bf988dcc` |
+| arm64 manifest | `sha256:1290203b9c50c5fdf925071c8748e059d20241b50c69173763d7df13b26c0e99` |
+| amd64 config digest（镜像 ID） | `sha256:f11a3239d6797778d0ec42f61f3c499013e880a33426298bb620f3463f1365ee` |
+| revision 标签 | `330e4f1997fe34199b9e278145f238129dc5a40a`（已核验与源码一致） |
+| 可见性 | 匿名可拉（无需登录） |
+
+内容：修复 Fal.ai / Replicate 渠道「读取模型失败：404」——两条协议补进
+`modelDiscoveryRules` / `modelConfigTestRules`，`models` 由"返回提示"改为返回内置清单
+（Fal 24 个、Replicate 25 个）。详见 `FAL-REPLICATE.md` 与 `CHANGELOG-custom.md`。
+
+> **判断"镜像好了没有"最可靠的办法是查 GHCR 标签，而不是刷 Actions 页面。**
+> 本次 Actions 页面长时间停在运行中，但镜像其实早已推送完毕。GHCR 的匿名令牌
+> 不受 GitHub API 速率限制影响，见本节开头的探测命令：`HTTP 200` = 已就绪，`404` = 还在构建。
 
 ### v0.7.1-custom.3 — 2026-09-24
 
