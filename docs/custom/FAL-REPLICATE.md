@@ -144,22 +144,54 @@ kwaivgi/kling-v1.6-standard?image_field=start_image&duration=10
 | 平台 | 方式 |
 |---|---|
 | **Fal.ai** | 后端把本地图**内联成 data URI** 直接塞进请求体（fal 接受 data URI，无大小限制） |
-| **Replicate** | 后端先调用 Replicate 的 `POST /v1/files` 上传，拿到地址再作为输入（官方文档：data URI 只建议用于 1MB 以内的文件） |
+| **Replicate** | 本地直连时后端先调 `POST /v1/files` 上传，拿到地址再作为输入（官方文档：data URI 只建议用于 1MB 以内的文件） |
 
-两边都用到画布已有的"参考素材占位符 → 替换"机制，未改上游行为。
+- **本地直连**：走画布已有的"参考素材占位符 → 浏览器替换"机制，未改上游行为。
+- **账号渠道（登录后）**：画布在有参考图时发的是 **multipart**（图片在文件字段里），
+  后端会把文件字段转成 data URI 再拼进平台报文（与上游 APIMart 的处理方式一致）。
+  整个 multipart 请求体上限 64MB，单个文件上限 16MB，超过会明确报错。
+  > Replicate 官方建议 data URI 在 1MB 以内，账号渠道下超限的图可能被平台拒绝；
+  > 此时改用公网图片地址（画布服务端地址）更稳。
+
 **参考音频两个平台都不支持**，附了音频会得到明确报错而不是静默丢弃。
 
 ---
 
 ## 六、轮询与结果
 
+两个平台都是**队列/异步**平台：提交只回一个任务 ID，产物要再查一次。
+画布有两条链路，**两条都已支持**，用户不需要关心走的是哪条：
+
+| 链路 | 何时使用 | 谁负责轮询 |
+|---|---|---|
+| **浏览器直连** | 本地渠道模式（渠道与 Key 存在浏览器里） | 前端协议适配器（`web/src/services/api/protocols/*.ts`） |
+| **画布后端代理** | 账号渠道（登录后，渠道建在服务端） | 画布后端（`handler/fal_request.go`、`handler/replicate_request.go`） |
+
+> 后端代理这条是 `v0.7.1-custom.5` 才补上的。此前两个平台的转译只在"本地参数转译"
+> 这一种模式下生效，账号渠道（登录后）走的是后端代理，报文没被转译、队列也没人跟进，
+> 表现就是上游 400 / 卡住不动。
+
 | 平台 | 提交 | 取结果 |
 |---|---|---|
-| Fal.ai | `POST {base}/{模型路径}` → `request_id` | `GET {base}/{模型路径}/requests/{id}/response`，**未完成返回 202**，完成返回 200 + 模型输出 |
-| Replicate | `POST {base}/predictions` 或 `/models/{o}/{n}/predictions` | `GET {base}/predictions/{id}`，读 `status`，完成时从 `output` 取地址 |
+| Fal.ai | `POST {base}/{模型路径}` → `request_id` + `status_url` / `response_url` | 先 `GET {base}/{owner}/{app}/requests/{id}/status` 等 `COMPLETED`，再取 `.../response` |
+| Replicate | `POST {base}/predictions` 或 `/models/{o}/{n}/predictions` → `id` + `urls.get` | `GET {base}/predictions/{id}`，读 `status`，完成时从 `output` 取地址 |
+
+Replicate 的 `failed`、`canceled`、`aborted` 状态会作为失败返回；`aborted` 表示任务开始前已终止。
+
+> ⚠️ **Fal 的队列路径只取模型 ID 的前两段。** fal 的队列按"应用"划分，
+> `fal-ai/flux/dev` 的队列是 `fal-ai/flux`，`fal-ai/kling-video/v2.1/master/text-to-video`
+> 的队列是 `fal-ai/kling-video`。用完整模型路径请求队列接口会得到 **405**（路由不存在），
+> 实测对照：`.../fal-ai/flux/requests/{id}/status` → 404 `{"status":"NOT_FOUND"}`（路由在），
+> `.../fal-ai/flux/dev/requests/{id}/status` → 405（多了一段）。
+> 提交地址仍用完整模型路径，这一点不变。
 
 产物地址的读取是**白名单**的：只认 `images/image`、`video/videos/video_url`、`audio/audio_url`
-这些输出字段。Fal 提交响应里的 `status_url` / `response_url` 是合法 URL，但不会被误当成产物。
+这些输出字段。Fal 提交响应里的 `status_url` / `response_url`、Replicate 轮询响应里的
+`urls.get` / `urls.cancel` 都是合法 URL，但不会被误当成产物。
+
+代理模式下的排队等待由**画布后端**完成（与上游 APIMart / KIE 的做法一致）：
+图片接口在同一个请求里跑完队列，视频接口把上游 ID 存成画布任务 ID，之后由画布按任务轮询。
+上游自己返回的查询地址会被优先使用，但只接受**同源**地址（防止渠道被配置成把请求转去别处）。
 
 ---
 
@@ -168,8 +200,12 @@ kwaivgi/kling-v1.6-standard?image_field=start_image&duration=10
 | 现象 | 原因 |
 |---|---|
 | `读取模型失败：404` | `v0.7.1-custom.3` 及更早版本的 bug：这两个协议没登记进"模型发现"规则，请求落到了 OpenAI 的 `/models`，实际打的是 `queue.fal.run/models`。升级到 `v0.7.1-custom.4` 及以上即可 |
+| `AI 接口请求失败：400` | `v0.7.1-custom.4` 及更早版本的症状：账号渠道下的报文没被转译就直接发给了平台（`400` 就是平台拒绝的），而平台的报错体形如 `{"detail": ...}`，画布读不出来，只剩一句状态码。**升级到 `v0.7.1-custom.5` 后会显示平台原文**（如 `missing: body.prompt`），不再是无信息的状态码 |
+| 出现 `detail` / `type: loc` 之类的英文报错 | 这是平台返回的**参数校验错误原文**，现在会如实显示。按提示修正模型名后的 query 即可 |
 | `Fal 任务缺少请求 ID 或模型 ID` | 模型名没填，或填了纯参数 |
 | `Fal 图片编辑需要至少一张参考图` | 该模型是图生图，但画布里没放参考图 |
+| `Fal 任务已完成但没有返回图片地址` | 模型不是图片模型（选错了），或该模型的输出字段不在白名单里 |
+| `上游队列任务超时` | 排队/生成超过约 10 分钟。可稍后在创作台看结果，或换更轻的模型 |
 | `Replicate 模型名需为 owner/name 或 owner/name:version` | 模型名格式不对 |
 | `Replicate 图片编辑需要至少一张参考图` | 同上 |
 | `Fal 渠道暂不支持参考音频` | 附了音频参考 |

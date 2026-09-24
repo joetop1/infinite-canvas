@@ -86,14 +86,16 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 	body, contentType, err = normalizeVideoCreateBody(body, contentType, modelName, channel, upstreamPath)
 	if err != nil {
 		log.Printf("AI video normalize request failed: model=%s err=%v", modelName, err)
-		if service.IsAutoDLChannel(channel) {
+		// [CUSTOM] Fal / Replicate 的转译错误包含可操作的参数校验信息。
+		if service.IsAutoDLChannel(channel) || service.IsFalChannel(channel) || service.IsReplicateChannel(channel) {
 			Fail(w, err.Error())
 			return
 		}
 		Fail(w, "AI 接口请求失败")
 		return
 	}
-	request, err := http.NewRequest(http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
+	// [CUSTOM] 保留客户端取消信号，避免断开后仍发起上游生成。
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
 	if err != nil {
 		log.Printf("AI video build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, upstreamPath), err)
 		Fail(w, "AI 接口请求失败")

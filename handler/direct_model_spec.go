@@ -1,8 +1,16 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,6 +20,104 @@ var (
 	aspectRatioPattern = regexp.MustCompile(`^(\d+)\s*:\s*(\d+)$`)
 	pixelSizePattern   = regexp.MustCompile(`^(\d+)x(\d+)$`)
 )
+
+const (
+	directReferenceRequestLimit = 64 << 20
+	directReferenceFileLimit    = 16 << 20
+)
+
+// decodeDirectRequestBody 解析画布发来的请求体。
+//
+// 账号渠道（登录后）下，画布在带参考图时发的是 multipart——图片放在文件字段里
+// （见 canvas_task.go 的 stripCanvasTaskMultipartFields），所以不能只按 JSON 解析，
+// 否则图片编辑会直接以"只接受 JSON"失败。文件字段统一转成 data URI：
+// Fal 的模型输入普遍接受 data URI；Replicate 官方建议单文件 1MB 以内，
+// 超出时由平台自行拒绝（错误原文现在会如实带出来）。
+func decodeDirectRequestBody(raw []byte, contentType string, label string) (map[string]any, error) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "multipart/form-data") {
+		return decodeDirectBodyObject(raw, label)
+	}
+	if len(raw) > directReferenceRequestLimit {
+		return nil, fmt.Errorf("%s 渠道的请求体超过 %dMB", label, directReferenceRequestLimit>>20)
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, errors.New(label + " 渠道的请求体格式无法解析")
+	}
+	form, err := multipart.NewReader(bytes.NewReader(raw), params["boundary"]).ReadForm(directReferenceRequestLimit)
+	if err != nil {
+		return nil, errors.New(label + " 渠道的请求体格式无法解析")
+	}
+	defer form.RemoveAll()
+
+	body := map[string]any{}
+	appendField := func(key string, value any) {
+		if strings.HasPrefix(key, "_canvas_") {
+			return
+		}
+		if existing, ok := body[key]; ok {
+			if list, ok := existing.([]any); ok {
+				body[key] = append(list, value)
+				return
+			}
+			body[key] = []any{existing, value}
+			return
+		}
+		body[key] = value
+	}
+	for key, values := range form.Value {
+		for _, value := range values {
+			appendField(key, parseDirectFormValue(value))
+		}
+	}
+	for key, headers := range form.File {
+		for _, header := range headers {
+			data, mimeType, err := readDirectFormFile(header)
+			if err != nil {
+				return nil, err
+			}
+			if mimeType == "" || strings.EqualFold(mimeType, "application/octet-stream") {
+				// 画布上传的文件常不带精确的类型，按扩展名补一个，避免一律降级成 octet-stream。
+				if byExtension := mime.TypeByExtension(filepath.Ext(header.Filename)); byExtension != "" {
+					mimeType = byExtension
+				}
+			}
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+			appendField(key, "data:"+mimeType+";base64,"+base64.StdEncoding.EncodeToString(data))
+		}
+	}
+	return body, nil
+}
+
+func parseDirectFormValue(value string) any {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	var parsed any
+	if json.Unmarshal([]byte(text), &parsed) == nil {
+		return parsed
+	}
+	return text
+}
+
+func readDirectFormFile(header *multipart.FileHeader) ([]byte, string, error) {
+	file, err := header.Open()
+	if err != nil {
+		return nil, "", errors.New("读取参考素材失败：" + header.Filename)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, directReferenceFileLimit+1))
+	if err != nil {
+		return nil, "", errors.New("读取参考素材失败：" + header.Filename)
+	}
+	if int64(len(data)) > directReferenceFileLimit {
+		return nil, "", fmt.Errorf("参考素材 %s 超过 %dMB，请改用公网地址", header.Filename, directReferenceFileLimit>>20)
+	}
+	return data, strings.TrimSpace(header.Header.Get("Content-Type")), nil
+}
 
 // 第三方平台（Fal / Replicate）的模型标识支持用 query 追加模型专属参数，
 // 例如 `fal-ai/flux/dev?image_size=landscape_16_9&num_inference_steps=28`、
@@ -116,7 +222,13 @@ func readDirectString(value any) string {
 	}
 }
 
-// readDirectReferences 收集参考素材占位符；兼容单值与数组两种写法。
+// readDirectReferences 收集参考素材；兼容单值与数组两种写法。
+//
+// 两种模式下字段值的形态不同，都要认：
+//   - 本地直连：浏览器上传前先放占位符（direct-reference.invalid），由浏览器换成真实地址；
+//   - 账号渠道：画布后端代理，传进来的已经是画布服务端地址或内联 data URI。
+//
+// 早先只认占位符，导致账号渠道下的图片编辑一律报"需要至少一张参考图"。
 func readDirectReferences(body map[string]any, key string) []string {
 	value, ok := body[key]
 	if !ok {
@@ -124,7 +236,7 @@ func readDirectReferences(body map[string]any, key string) []string {
 	}
 	collect := func(item any) []string {
 		text := readDirectString(item)
-		if text == "" || directAIReferenceKind(text) == "" {
+		if text == "" || !isDirectReferenceValue(text) {
 			return nil
 		}
 		return []string{text}
@@ -137,6 +249,20 @@ func readDirectReferences(body map[string]any, key string) []string {
 		return result
 	}
 	return collect(value)
+}
+
+// isDirectReferenceValue 判断字段值是不是参考素材：占位符、公网地址或内联数据。
+func isDirectReferenceValue(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	// data URI 的具体 MIME 不必苛刻：字段名（image / video_reference[] …）已经说明用途。
+	if strings.HasPrefix(lower, "data:") {
+		return true
+	}
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 func readDirectCount(value any) (int, bool) {

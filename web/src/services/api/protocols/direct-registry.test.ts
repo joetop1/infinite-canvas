@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { directProtocolAdapters } from "./direct-registry";
+import { falQueuePath } from "./fal";
 import { collectHTTPURLs, normalizeDirectStatus, readDirectError } from "./shared";
 
 // Expectations are taken from direct-ai.ts at a27f046, before protocol extraction.
@@ -162,8 +163,9 @@ test("Fal uses Key auth, polls the queue result endpoint and never treats tracki
     assert.equal(protocol.authorization?.(" abcd "), "Key abcd");
     assert.equal(protocol.authorization?.("Key abcd"), "Key abcd");
     assert.equal(protocol.authorization?.("key abcd"), "key abcd");
-    assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/1", "fal-ai/flux/dev"), "https://queue.fal.run/fal-ai/flux/dev/requests/req%2F1/response");
-    assert.equal(protocol.pollURL?.("https://queue.fal.run", "req", "fal-ai/flux/dev?image_size=square_hd"), "https://queue.fal.run/fal-ai/flux/dev/requests/req/response");
+    // 队列路径只取前两段：fal-ai/flux/dev 的队列是 fal-ai/flux（详见 falQueuePath 的说明）。
+    assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/1", "fal-ai/flux/dev"), "https://queue.fal.run/fal-ai/flux/requests/req%2F1/response");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run", "req", "fal-ai/flux/dev?image_size=square_hd"), "https://queue.fal.run/fal-ai/flux/requests/req/response");
     assert.throws(() => protocol.pollURL?.("https://queue.fal.run/", "req", ""), /模型/);
     assert.throws(() => protocol.pollURL?.("https://queue.fal.run", "req"), /模型/);
     assert.throws(() => protocol.pollPath("req"), /模型/);
@@ -238,4 +240,19 @@ test("Replicate polls predictions and reads outputs from the output field only",
     assert.equal(protocol.readError({ detail: "Request was throttled." }), "Request was throttled.");
     assert.equal(protocol.readError({ error: "prediction failed" }), "prediction failed");
     assert.equal(protocol.readError({ code: 500 }), "上游请求失败：500");
+});
+
+test("Fal polling uses the queue path (owner/app) instead of the full model path", () => {
+    const protocol = directProtocolAdapters.fal;
+    // 单层模型：队列路径与模型路径相同。
+    assert.equal(falQueuePath("fal-ai/flux"), "fal-ai/flux");
+    // 多段模型：只有前两段是应用名，多带一段会被上游回 405。
+    assert.equal(falQueuePath("fal-ai/flux/dev"), "fal-ai/flux");
+    assert.equal(falQueuePath("fal-ai/kling-video/v2.1/master/text-to-video"), "fal-ai/kling-video");
+    assert.equal(falQueuePath("fal-ai/flux/dev?image_size=landscape_16_9"), "fal-ai/flux");
+    assert.equal(falQueuePath("justaname"), "");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/a b?", "fal-ai/flux/dev"),
+        "https://queue.fal.run/fal-ai/flux/requests/req%2Fa%20b%3F/response");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run", "req-1", "fal-ai/kling-video/v2.1/master/text-to-video"),
+        "https://queue.fal.run/fal-ai/kling-video/requests/req-1/response");
 });

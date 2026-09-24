@@ -13,9 +13,9 @@ export const falDirectProtocol: DirectProtocolAdapter = {
     },
     pollURL(baseUrl, taskId, model) {
         const requestId = readString(taskId);
-        const modelId = falModelId(model);
-        if (!requestId || !modelId) throw new Error("Fal 任务缺少请求 ID 或模型 ID，无法查询结果");
-        return `${falBaseURL(baseUrl)}/${modelId}/requests/${encodeURIComponent(requestId)}/response`;
+        const queuePath = falQueuePath(model);
+        if (!requestId || !queuePath) throw new Error("Fal 任务缺少请求 ID 或模型 ID，无法查询结果");
+        return `${falBaseURL(baseUrl)}/${queuePath}/requests/${encodeURIComponent(requestId)}/response`;
     },
     readTaskId: (payload) => firstString(readPath(payload, "request_id"), readPath(payload, "id")),
     readCreatedVideoStatus: (payload) => normalizeFalStatus(readString(readPath(payload, "status"))),
@@ -53,6 +53,15 @@ export const falDirectProtocol: DirectProtocolAdapter = {
 // URL 与轮询只使用 `?` 之前的真实模型路径。
 export function falModelId(model?: string) {
     return readString(model).split(/[?#]/)[0].trim();
+}
+
+// fal 的队列按"应用"划分，多段模型 ID（如 fal-ai/kling-video/v2.1/master/text-to-video）
+// 只有前两段是应用名，其余是应用内端点；用完整模型路径请求队列接口会得到 405。
+// 实测对照：.../fal-ai/flux/requests/{id}/response → 404 NOT_FOUND（路由存在），
+// .../fal-ai/flux/dev/requests/{id}/response → 405（多了一段，路由不存在）。
+export function falQueuePath(model?: string) {
+    const segments = falModelId(model).split("/").filter(Boolean);
+    return segments.length < 2 ? "" : `${segments[0]}/${segments[1]}`;
 }
 
 function falBaseURL(baseUrl: string) {

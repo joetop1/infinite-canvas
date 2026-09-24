@@ -5,7 +5,7 @@
 
 验收口径见 `README.md` 第一节：`git diff --numstat upstream/main..custom` 的删除行，只允许是与新增行成对的行内改写。真正删掉上游代码即为违规。
 
-当前状态：**上游文件共 11 个被改过**，其中 5 个只有新增行，6 个含"行内改写"性质的删除行——
+当前状态：**上游文件共 13 个被改过**，其中 5 个只有新增行，8 个含"行内改写"性质的删除行——
 
 | 上游文件 | 新增 | 删除 | 性质 |
 |---|---|---|---|
@@ -14,17 +14,19 @@
 | `web/src/services/api/direct-ai.ts` | 12 | 4 | 4 行行内改写 |
 | `web/src/services/api/protocols/types.ts` | 3 | 1 | 1 行行内改写 |
 | `web/src/services/api/protocols/direct-registry.ts` | 4 | 0 | 纯新增 |
-| `web/src/services/api/protocols/direct-registry.test.ts` | 85 | 1 | 1 行行内改写 |
+| `web/src/services/api/protocols/direct-registry.test.ts` | 102 | 1 | 1 行行内改写 |
 | `web/src/lib/model-channel.ts` | 2 | 0 | 纯新增 |
 | `web/src/lib/model-channel.test.ts` | 9 | 1 | 1 行行内改写 |
-| `handler/model_protocol.go` | 36 | 0 | 纯新增 |
+| `handler/ai.go` | 17 | 4 | 4 行行内改写（2 行 gofmt 字段对齐、2 处请求上下文/错误透传） |
+| `handler/model_protocol.go` | 46 | 0 | 纯新增 |
 | `handler/model_protocol_direct_test.go` | 84 | 0 | 纯新增 |
+| `handler/video_task.go` | 4 | 2 | 2 行行内改写（错误透传与请求上下文） |
 | `service/model_protocol.go` | 61 | 8 | 8 行行内改写（7 行是 gofmt 对齐，1 行是列表加项） |
 
 无一处是净删除。删除行分两类，都可逐行对照：
 
-- **go 常量块对齐**（`service/model_protocol.go` 7 行）：新增 `fal` / `replicate` 两个常量后 `gofmt` 重新对齐 `=` 号，原 7 个常量名一字未改。
-- **单行扩写**（其余 12 行）：`modelProtocolIDs` 列表加项、`pollURL` 签名加参数、`Authorization` 头改走新的 `directAuthorization()`、`response.ok` 判断兼容 202、`ark` 内联条件加上 `fal`、测试里的协议白名单加项。每一处都在同一位置有新版本顶上。
+- **gofmt 对齐**（共 9 行）：`service/model_protocol.go` 7 行——新增 `fal` / `replicate` 两个常量后重新对齐 `=` 号，原 7 个常量名一字未改；`handler/ai.go` 2 行——结构体新增 `Detail json.RawMessage` 字段后重新对齐 `Msg` / `Message` 的字段类型，字段名与 tag 一字未改。
+- **其他行内改写**（其余 16 行）：包括视频代理与图片代理的请求上下文、Fal/Replicate 参数错误透传，以及 `modelProtocolIDs`、`pollURL`、鉴权、202 兼容、协议白名单等挂载点。每一处都在同一位置有新版本顶上。
 
 ## 挂载点清单（改动上游文件的全部位置）
 
@@ -40,18 +42,139 @@
 | `web/src/services/api/protocols/types.ts` | `DirectProtocolAdapter` | 追加 `authorization?` 字段与注释；`pollURL` 签名增加可选 `model` 参数（行内改写 1 行） |
 | `web/src/services/api/protocols/direct-registry.ts` | 文件头 import 与注册表 | 追加 `fal` / `replicate` 两条（纯新增 4 行） |
 | `web/src/lib/model-channel.ts` | `modelChannelProtocols` 数组 | 追加 `fal` / `replicate` 两条协议项（纯新增 2 行） |
-| `handler/model_protocol.go` | `builtinAIProtocols` 表 | 追加 `fal` / `replicate` 两个适配器（纯新增 36 行，插在 `model:agnes` 之前） |
+| `handler/ai.go` | `readUpstreamAIErrorMessage()`、`proxyAIRequest()` | 结构体加 `Detail` 字段（行内改写 2 行）；追加上游错误解析、参数错误透传和请求上下文（新增代码均有 `[CUSTOM]` 标记），解析逻辑全在新文件 `handler/upstream_error_message.go` |
+| `handler/model_protocol.go` | `builtinAIProtocols` 表 | 追加 `fal` / `replicate` 两个适配器（纯新增 46 行，插在 `model:agnes` 之前） |
+| `handler/video_task.go` | `proxyAIVideoTaskRequest()` | Fal/Replicate 参数错误透传；上游视频请求继承用户请求上下文（2 行行内改写） |
 | `service/model_protocol.go` | 常量块与 `init()` 注册表 | 追加 2 个协议常量、2 个 `modelProtocolIDs` 项、2 段注册逻辑（含 3 个新函数 `IsFalChannel` / `IsReplicateChannel` / `FalAuthorizationHeader`） |
 | `service/model_protocol.go` | `modelDiscoveryRules` | 追加 `fal` / `replicate` 两条规则（2 行代码 + 2 行注释）。**缺少它们会让"拉取模型列表"回落到 OpenAI 的 `/models`** |
 | `service/model_protocol.go` | `modelConfigTestRules` | 追加 `fal` / `replicate` 两条规则（2 行代码 + 1 行注释），否则"测试渠道"会去打 `chat/completions` |
-| 两个 `*_test.go` | 文件内追加用例 | 纯新增，未改任何既有断言（`direct-registry.test.ts` 有 1 行行内改写：协议白名单加项） |
+| 三个 `*_test.go` | `handler/model_protocol_direct_test.go`、`web/src/lib/model-channel.test.ts`、`web/src/services/api/protocols/direct-registry.test.ts` | 断言表追加用例；后两者各有 1 行行内改写（协议白名单加项、`fal` 队列地址断言） |
 
-新增文件（上游不存在，零冲突）：`web/src/services/api/protocols/fal.ts`、
-`web/src/services/api/protocols/replicate.ts`、`handler/fal_request.go`、
-`handler/replicate_request.go`、`handler/direct_model_spec.go`、`docs/custom/FAL-REPLICATE.md`、
-`service/custom_direct_models.go`、`service/custom_direct_models_test.go`。
+**新增文件共 17 个**（上游不存在，零冲突）——它们不构成冲突面，可直接 `git merge`：
+
+| 位置 | 文件 |
+|---|---|
+| 仓库根 | `docker-compose.custom.yml` |
+| `handler/`（放上游目录是为了复用同包非导出符号，见 `README.md` 第四节例外） | `fal_request.go`、`replicate_request.go`、`direct_model_spec.go`、`direct_queue.go`、`upstream_error_message.go`、`model_protocol_proxy_test.go`、`model_protocol_queue_test.go` |
+| `service/` | `custom_direct_models.go`、`custom_direct_models_test.go` |
+| `web/src/services/api/protocols/` | `fal.ts`、`replicate.ts` |
+| `docs/custom/`、`scripts/` | `README.md`、`CHANGELOG-custom.md`、`DEPLOY.md`、`FAL-REPLICATE.md`、`sync-upstream.sh` |
+
+核对命令（改动 vs 新增一眼可分）：
+
+```bash
+for f in $(git diff --numstat upstream/main | awk '{print $3}'); do
+  printf '%-58s ' "$f"
+  git cat-file -e upstream/main:"$f" 2>/dev/null && echo '上游已有 → 改动' || echo '★ 新增文件'
+done
+```
 
 ## 变更记录
+
+### v0.7.1-custom.5 — 修复账号渠道下的「AI 接口请求失败：400」
+
+- **上游挂载点**：`handler/ai.go`（**新增的第 12 个**，17 增 / 4 改）；`handler/video_task.go` 增加 4 行 / 2 处行内改写
+- **新增文件**：`handler/upstream_error_message.go`、`handler/direct_queue.go`、
+  `handler/model_protocol_proxy_test.go`、`handler/model_protocol_queue_test.go`
+- **改写文件**：`handler/fal_request.go`、`handler/replicate_request.go`、`handler/direct_model_spec.go`、
+  `handler/model_protocol.go`、`web/src/services/api/protocols/fal.ts`、
+  `handler/video_task.go`、`web/src/services/api/protocols/direct-registry.test.ts`
+- **症状**：**账号渠道**（登录后、渠道建在服务端）用 Fal / Replicate 生成，只得到一句
+  `AI 接口请求失败：400`。本地直连（渠道存在浏览器里）却正常。
+
+- **一句话里藏着三个独立 bug**，逐个定位。这三处**都不是同一个原因**，
+  修掉任意一处另外两处仍会让它失败：
+
+  **① mode 门 —— 账号渠道的报文根本没被转译。**
+
+  `prepareFalRequest` / `prepareReplicateRequest` 开头写的是：
+
+  ```go
+  if input.mode != aiProtocolDirectRequest { return nil, nil }
+  ```
+
+  但这个 `prepare` 钩子**三条链路都会调用**：
+
+  | `input.mode` | 链路 |
+  |---|---|
+  | `aiProtocolDirectRequest` | 本地直连的"参数转译接口"（`/api/ai/direct-request`） |
+  | `aiProtocolProxyRequest` | **账号渠道走画布后端代理** ← 被门挡住的正是这条 |
+  | `aiProtocolVideoRequest` | 视频创作台建任务 |
+
+  于是登录后走代理时函数直接空转返回，**画布形态的报文（`model` / `size` / `n`）原样发给了平台**——
+  平台当然拒收，这就是那个 `400`。
+
+  **改法**：去掉 mode 门，改判「这个渠道是不是 Fal / Replicate」（`isFalEndpoint` / `isReplicateEndpoint`）。
+  判据从"谁在调用我"换成"我在处理谁"，与调用链路无关，三条链路自动全部生效。
+
+  **② 错误体不认 —— 平台明明说了原因，被丢掉了。**
+
+  `readUpstreamAIErrorMessage` 只认 `error.message` / `msg` / `message`，
+  而 Fal 与 Replicate 都是 FastAPI，报错体形如 `{"detail": ...}`（字符串，
+  或 `[{"msg": ..., "loc": ..., "type": ...}]` 列表）。读不出来就只剩状态码。
+
+  **改法**：结构体加一个 `Detail json.RawMessage` 字段（2 行行内改写，gofmt 顺带对齐了
+  `Msg` / `Message` 的类型列），其后接两处 `[CUSTOM]` 调用；**解析逻辑全部放进新文件
+  `handler/upstream_error_message.go`**，上游函数里只留两行调用。用户此后看到的是平台原文，
+  例如 `missing: body.prompt`。
+
+  **③ 队列路径多了一段 —— Fal 轮询 405。**
+
+  Fal 的队列按**应用**划分，不按模型。`fal-ai/flux/dev` 的队列是 `fal-ai/flux`。
+  用完整模型路径去拼查询地址会多出一段。curl 实测对照：
+
+  | 地址 | 结果 |
+  |---|---|
+  | `.../fal-ai/flux/requests/{id}/status` | 404 `{"status":"NOT_FOUND"}` —— **路由存在**，只是这个 id 不在该队列 |
+  | `.../fal-ai/flux/dev/requests/{id}/status` | **405** —— 多了一段 |
+
+  `fal-ai/kling-video/v2.1/master/text-to-video` 同理只取到 `fal-ai/kling-video`。
+
+  **改法**：新增 `falQueuePath()`（Go 与 TS 各一份），只取前两段。**提交地址仍用完整模型路径**，
+  这一点不变。
+
+- **顺带补齐的一条链路：代理模式下后端要替用户把队列跑完。**
+  参照上游既有的 `pollAPIMartImageTask` / `copyKIEVideoResponse` 写法：
+  图片接口在同一个请求里跑完队列再返回图；视频接口把上游 ID 存成画布任务 ID，之后由画布按任务轮询。
+  共用的等待与取址逻辑抽进新文件 `handler/direct_queue.go`（固定 2 秒间隔、上限 300 次，
+  并 `select` 监听 `request.Context().Done()`，用户离开后不会继续空转）。
+  上游自己返回的查询地址（Fal 的 `status_url` / `response_url`）会被优先使用，
+  但**只接受与渠道同源的地址**——否则渠道可以被配置成把请求转去任意第三方。
+  产物地址的读取走**白名单字段**，Fal 的 `status_url` / Replicate 的 `urls.get` 这类
+  "合法但不是产物"的 URL 不会被误取。
+
+- **账号渠道下的参考素材与本地直连形态不同**：有参考图时画布发的是 **multipart**
+  （图片在文件字段里，另有 `_canvas_*` 元字段），本地直连走的则是"占位符 → 浏览器替换"。
+  新增 `decodeDirectRequestBody()` 作统一入口：非 multipart 走原有解析；multipart 请求体上限
+  64MB，字段名跳过 `_canvas_*`、同名字段聚成数组、文件字段转成
+  `data:<mime>;base64,...`（MIME 缺失或为 `application/octet-stream` 时按扩展名补）。单个文件上限 16MB。
+
+- **复核补齐**：代理与视频创建请求现在继承客户端取消上下文；渠道转译错误会显示给用户；
+  自上游返回的队列地址要求 scheme 与 host 都匹配；Replicate 的 `aborted` 预测按失败处理。
+
+- **过程中被自家新测试抓出的一个 bug**：`readDirectReferences` 原先**只认**
+  `direct-reference.invalid` 这种占位符，而账号渠道传进来的是 data URI 或服务端地址，
+  于是报「Fal 图片编辑需要至少一张参考图」。已放宽为「任意 `data:` 前缀或 http(s) 地址」。
+
+- **反向验证**（先让测试失败，再让它通过，确认测试真的能抓住 bug）：
+
+  | 故意制造的错误 | 立刻失败的用例 |
+  |---|---|
+  | 把 `falQueuePath` 改回完整模型路径 | `TestFalQueueImageProxyFlow/queue_path_drops_model_sub_path`、`TestFalVideoProxyFlow`（并准确报出多出的那一段） |
+  | 把 mode 门加回去 | 转译用例失败（`provider` 为空），确认门确实拦住了代理链路 |
+  | 移除 `modelDiscoveryRules` 的两条规则（custom.4 时） | `TestCustomDirectModelDiscoveryDoesNotFallBackToOpenAI` |
+
+- **独立复核**：Go 1.27.1 下 `go test ./...`、`go vet ./...`、`go build ./...` 均通过；
+  `bun test` **23 pass / 0 fail**；`git diff --check` 通过。`gofmt -d` 只剩
+  `handler/model_protocol.go` 中 AutoDL 字段和 `handler/video_task.go` 中既有 `ClientTaskID` 的对齐差异，
+  Fal/Replicate 新增代码已格式化。TypeScript 检查仍报错在未改动的 `canvas-client-page.tsx`。
+- **原会话记录**：曾报告 `bun run build` 编译与静态页生成成功（20/20）；本次没有重跑前端生产构建。
+
+- **仍需人工验收**：宝塔把 `image` 改为 `ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.5`
+  并重启后，用 `fal-ai/flux/dev` 跑一次纯文生图。详见 `FAL-REPLICATE.md` 第七节。
+
+- **一条环境备注**：`bun run build` 结尾的临时文件清理会被宿主 WorkBuddy 的删除护栏拦下
+  （`SAFE_DELETE_BULK_CONFIRM_REQUIRED`），**编译本身是成功的**；清理 `.next` 后重跑即可。
 
 ### v0.7.1-custom.4 — 修复 Fal/Replicate 渠道「读取模型失败：404」
 
@@ -97,7 +220,7 @@
 
 - **验证**：`go vet ./...` 无输出、`go test ./...` 全绿（service 包新增 3 例）。
 
-### 接入 Fal.ai / Replicate 渠道
+### v0.7.1-custom.3 — 接入 Fal.ai / Replicate 渠道
 
 - **新增文件**：`web/src/services/api/protocols/fal.ts`、`web/src/services/api/protocols/replicate.ts`、
   `handler/fal_request.go`、`handler/replicate_request.go`、`handler/direct_model_spec.go`、`docs/custom/FAL-REPLICATE.md`

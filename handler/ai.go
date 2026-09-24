@@ -159,14 +159,16 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 	if err != nil {
 		log.Printf("AI proxy normalize %s request failed: model=%s err=%v", prepared.failureLabel, modelName, err)
 		message := "AI 接口请求失败"
-		if prepared.failureLabel == "MiMo TTS" || prepared.failureLabel == "AutoDL" {
+		// [CUSTOM] Fal / Replicate 的本地转译错误需要返回给用户，便于修正模型参数。
+		if prepared.failureLabel != "" {
 			message = err.Error()
 		}
 		Fail(w, message)
 		return
 	}
 	body, contentType, upstreamPath = prepared.body, prepared.contentType, prepared.path
-	request, err := http.NewRequest(http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
+	// [CUSTOM] 图片队列轮询沿用客户端请求上下文，连接断开后及时停止。
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
 	if err != nil {
 		log.Printf("AI proxy build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, upstreamPath), err)
 		Fail(w, "AI 接口请求失败")
@@ -370,8 +372,9 @@ func readUpstreamAIErrorMessage(body []byte, statusCode int) string {
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
-		Msg     string `json:"msg"`
-		Message string `json:"message"`
+		Msg     string          `json:"msg"`
+		Message string          `json:"message"`
+		Detail  json.RawMessage `json:"detail"`
 	}
 	if len(body) > 0 && json.Unmarshal(body, &payload) == nil {
 		if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
@@ -383,6 +386,16 @@ func readUpstreamAIErrorMessage(body []byte, statusCode int) string {
 		if strings.TrimSpace(payload.Message) != "" {
 			return payload.Message
 		}
+		// [CUSTOM] Fal.ai / Replicate 沿用 FastAPI 的报错体 `{"detail": ...}`，
+		// 既不叫 error.message 也不叫 msg，不认它就只剩"AI 接口请求失败：400"。
+		if message := readUpstreamDetailMessage(payload.Detail); message != "" {
+			return message
+		}
+	}
+	// [CUSTOM] 非 JSON 的纯文本错误（网关、反向代理）比状态码更有信息量；
+	// HTML 页面与二进制噪声仍然只回状态码。
+	if message := readUpstreamPlainTextError(body); message != "" {
+		return message
 	}
 	if statusCode > 0 {
 		return fmt.Sprintf("AI 接口请求失败：%d", statusCode)

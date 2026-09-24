@@ -3,9 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
+	"github.com/tigerowo/infinite-canvas/model"
 	"github.com/tigerowo/infinite-canvas/service"
 )
 
@@ -19,8 +23,8 @@ import (
 // 模型专属参数同样通过模型名 query 传入，例如
 // `black-forest-labs/flux-dev?num_inference_steps=28&guidance=3.5`。
 // 模型名支持 Replicate 官方写法 `owner/name:versionhash`，也支持 `?version=hash`。
-func normalizeReplicateDirectBody(raw []byte, modelName string, endpoint string) ([]byte, error) {
-	body, err := decodeDirectBodyObject(raw, "Replicate")
+func normalizeReplicateDirectBody(raw []byte, contentType string, modelName string, endpoint string) ([]byte, error) {
+	body, err := decodeDirectRequestBody(raw, contentType, "Replicate")
 	if err != nil {
 		return nil, err
 	}
@@ -87,11 +91,11 @@ func normalizeReplicateDirectBody(raw []byte, modelName string, endpoint string)
 }
 
 func prepareReplicateRequest(input aiProtocolRequest) (aiProtocolRequest, bool, error) {
-	if input.mode != aiProtocolDirectRequest || !service.IsReplicateChannel(input.channel) {
+	if !service.IsReplicateChannel(input.channel) || !isReplicateEndpoint(input.endpoint) {
 		return input, false, nil
 	}
 	input.failureLabel = "Replicate"
-	body, err := normalizeReplicateDirectBody(input.body, input.modelName, input.endpoint)
+	body, err := normalizeReplicateDirectBody(input.body, input.contentType, input.modelName, input.endpoint)
 	if err != nil {
 		return input, true, err
 	}
@@ -100,10 +104,20 @@ func prepareReplicateRequest(input aiProtocolRequest) (aiProtocolRequest, bool, 
 	return input, true, nil
 }
 
-// replicateUpstreamPath：社区模型需要自带版本号，走 /predictions；官方模型走 /models/{owner}/{name}/predictions。
-func replicateUpstreamPath(modelName string, path string) (string, bool) {
-	switch path {
+// isReplicateEndpoint 与 Fal 同理：三种 mode 共用一份转译结果，只认领能转译的接口。
+func isReplicateEndpoint(endpoint string) bool {
+	switch endpoint {
 	case "/images/generations", "/images/edits", "/videos":
+		return true
+	default:
+		return false
+	}
+}
+
+// replicateUpstreamPath：提交时社区模型需要自带版本号，走 /predictions；
+// 官方模型走 /models/{owner}/{name}/predictions；轮询统一走 /predictions/{id}。
+func replicateUpstreamPath(modelName string, path string) (string, bool) {
+	if isReplicateEndpoint(path) {
 		spec := parseDirectModelSpec(modelName)
 		target, version, err := splitReplicateModel(spec.ModelPath, spec.Version)
 		if err != nil {
@@ -113,8 +127,138 @@ func replicateUpstreamPath(modelName string, path string) (string, bool) {
 			return "/predictions", true
 		}
 		return "/models/" + target + "/predictions", true
+	}
+	if taskID, ok := directTaskIDFromPath(path); ok {
+		return "/predictions/" + url.PathEscape(taskID), true
+	}
+	return path, true
+}
+
+func replicatePredictionURL(channel model.ModelChannel, predictionID string) string {
+	if strings.TrimSpace(predictionID) == "" {
+		return ""
+	}
+	return service.BuildModelChannelURL(channel, "/predictions/"+url.PathEscape(predictionID))
+}
+
+// readReplicateGetURL 建任务响应里自带查询地址（urls.get），同源时优先用它。
+func readReplicateGetURL(root map[string]any) string {
+	urls, ok := root["urls"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return readDirectStringField(urls, "get")
+}
+
+// replicateMediaURLKeys 故意不含 "urls"：Replicate 轮询报文里的 urls.get / urls.cancel
+// 是接口地址而不是产物地址，收进来会把接口地址当成生成的图片。
+var replicateMediaURLKeys = []string{"output", "video", "videos", "video_url", "image", "images", "url", "data"}
+
+// readReplicateProgress 解读轮询响应。
+func readReplicateProgress(payload []byte) (bool, string) {
+	root := decodeDirectQueuePayload(payload)
+	switch strings.ToLower(readDirectStringField(root, "status")) {
+	case "succeeded":
+		return true, ""
+	case "failed", "canceled", "cancelled", "aborted":
+		return false, readReplicateTaskError(root)
 	default:
-		return path, true
+		return false, ""
+	}
+}
+
+func readReplicateTaskError(root map[string]any) string {
+	if message := readDirectStringField(root, "error"); message != "" {
+		return message
+	}
+	if strings.EqualFold(readDirectStringField(root, "status"), "aborted") {
+		return "Replicate 任务已中止"
+	}
+	return "Replicate 任务失败"
+}
+
+// copyReplicateImageResponse 与 Fal 同理：账号渠道下由后端替用户把预测跑完，
+// 再把产物包成 OpenAI 图片响应，画布侧感知不到异步过程。
+func copyReplicateImageResponse(w http.ResponseWriter, response *http.Response, request *http.Request, channel model.ModelChannel, logContext aiLogContext, onFailure func()) bool {
+	if !service.IsReplicateChannel(channel) || !isDirectImageEndpoint(logContext.Endpoint) {
+		return false
+	}
+	payload, _ := io.ReadAll(response.Body)
+	if urls := readDirectMediaURLs(payload, replicateMediaURLKeys); len(urls) > 0 {
+		writeDirectImagesResponse(w, response.StatusCode, urls, logContext)
+		return true
+	}
+	root := decodeDirectQueuePayload(payload)
+	predictionID := readDirectStringField(root, "id")
+	if predictionID == "" {
+		writeDirectRawResponse(w, response, payload, logContext)
+		return true
+	}
+	target := firstNonEmpty(sameHostQueueURL(readReplicateGetURL(root), channel), replicatePredictionURL(channel, predictionID))
+	if target == "" {
+		if onFailure != nil {
+			onFailure()
+		}
+		writeDirectImageError(w, response.StatusCode, "Replicate 任务缺少查询地址，请检查渠道地址", logContext)
+		return true
+	}
+	result, message := pollDirectQueue(request, channel, target, readReplicateProgress)
+	if message != "" {
+		if onFailure != nil {
+			onFailure()
+		}
+		writeDirectImageError(w, response.StatusCode, message, logContext)
+		return true
+	}
+	imageURLs := readDirectMediaURLs(result, replicateMediaURLKeys)
+	if len(imageURLs) == 0 {
+		if onFailure != nil {
+			onFailure()
+		}
+		writeDirectImageError(w, response.StatusCode, "Replicate 任务已完成但没有返回图片地址", logContext)
+		return true
+	}
+	writeDirectImagesResponse(w, response.StatusCode, imageURLs, logContext)
+	return true
+}
+
+// replicateVideoResponse 处理视频建任务与轮询两段响应。
+func replicateVideoResponse(payload []byte, _ *http.Request, channel model.ModelChannel, _ string, status bool) ([]byte, bool) {
+	if !service.IsReplicateChannel(channel) {
+		return nil, false
+	}
+	root := decodeDirectQueuePayload(payload)
+	predictionID := readDirectStringField(root, "id")
+	if predictionID == "" {
+		return nil, false
+	}
+	if !status {
+		return marshalDirectMap(map[string]any{"id": predictionID, "task_id": predictionID, "status": "processing", "progress": 0})
+	}
+	switch strings.ToLower(readDirectStringField(root, "status")) {
+	case "succeeded":
+		videoURL := firstNonEmpty(readDirectMediaURLs(payload, replicateMediaURLKeys)...)
+		if videoURL == "" {
+			return marshalDirectMap(map[string]any{"status": "failed", "error": "Replicate 视频任务已完成但没有返回视频地址"})
+		}
+		return marshalDirectMap(map[string]any{"status": "completed", "progress": 100, "video_url": videoURL, "url": videoURL})
+	case "failed", "canceled", "cancelled", "aborted":
+		return marshalDirectMap(map[string]any{"status": "failed", "error": readReplicateTaskError(root)})
+	default:
+		return marshalDirectMap(map[string]any{"status": "processing"})
+	}
+}
+
+func readReplicateVideoError(payload []byte, channel model.ModelChannel, _ string, status bool) string {
+	if !service.IsReplicateChannel(channel) || !status {
+		return ""
+	}
+	root := decodeDirectQueuePayload(payload)
+	switch strings.ToLower(readDirectStringField(root, "status")) {
+	case "failed", "canceled", "cancelled", "aborted":
+		return readReplicateTaskError(root)
+	default:
+		return ""
 	}
 }
 

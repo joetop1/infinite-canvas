@@ -50,9 +50,11 @@ git diff --numstat upstream/main..custom
 | `web/src/services/api/protocols/types.ts` | `DirectProtocolAdapter` 加 `authorization?`、`pollURL` 加 `model?` | 3 增 / 1 改 |
 | `web/src/services/api/protocols/direct-registry.ts` | 注册表追加 `fal` / `replicate` | 4 行 |
 | `web/src/lib/model-channel.ts` | `modelChannelProtocols` 追加两个协议项 | 2 行 |
-| `handler/model_protocol.go` | `builtinAIProtocols` 追加 `fal` / `replicate` 适配器 | 36 行 |
+| `handler/ai.go` | `readUpstreamAIErrorMessage()` 结构体加 `Detail` 字段 + 两处 `[CUSTOM]` 调用（解析逻辑在新文件 `handler/upstream_error_message.go`）；代理请求透传参数错误并继承请求上下文 | 17 增 / 4 改 |
+| `handler/model_protocol.go` | `builtinAIProtocols` 追加 `fal` / `replicate` 适配器（含 `copyResponse` / `videoResponse` / `videoError` 三个钩子） | 46 行 |
+| `handler/video_task.go` | Fal/Replicate 参数错误透传，视频创建请求继承用户请求上下文 | 4 增 / 2 改 |
 | `service/model_protocol.go` | 2 个协议常量、`modelProtocolIDs` 加项、注册逻辑与 3 个新函数；`modelDiscoveryRules` 与 `modelConfigTestRules` 各补 `fal` / `replicate` 两条 | 61 增 / 8 改 |
-| `web/src/lib/model-channel.test.ts`、`web/src/services/api/protocols/direct-registry.test.ts`、`handler/model_protocol_direct_test.go` | 断言表追加用例（不改既有断言） | — |
+| `handler/model_protocol_direct_test.go`、`web/src/lib/model-channel.test.ts`、`web/src/services/api/protocols/direct-registry.test.ts` | 断言表追加用例（不改既有断言） | — |
 
 **除以上文件外，任何上游文件都不应出现自有改动。** 若发现必须新增挂载点，先在本文件登记，再动手。
 
@@ -79,6 +81,8 @@ Go 的可见性按**包**划分，`custom/` 是另一个包，读不到 `handler
 | 新文件 | 为什么要放在上游目录 |
 | --- | --- |
 | `handler/fal_request.go`、`handler/replicate_request.go`、`handler/direct_model_spec.go` | 需要 `package handler` 的非导出类型与函数 |
+| `handler/direct_queue.go`、`handler/upstream_error_message.go` | 同上——分别被 Fal/Replicate 的代理响应钩子与 `handler/ai.go` 的错误解析调用 |
+| `handler/model_protocol_proxy_test.go`、`handler/model_protocol_queue_test.go` | 要调用 `package handler` 的 `builtinAIProtocols` 与转译函数做端到端断言 |
 | `web/src/services/api/protocols/fal.ts`、`replicate.ts` | 需要被 `direct-registry.ts` 以相对路径注册，且要与同目录既有适配器共用 `shared.ts` |
 
 **这类文件全是新增文件，不构成冲突面**，可以直接 `git merge` 过去；

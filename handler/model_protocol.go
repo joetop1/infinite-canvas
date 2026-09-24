@@ -340,7 +340,7 @@ var builtinAIProtocols = []aiProtocolAdapter{
 		},
 	},
 	{
-		id:   service.ModelChannelProtocolFal,
+		id: service.ModelChannelProtocolFal,
 		path: func(channel model.ModelChannel, modelName string, path string) (string, bool) {
 			if !service.IsFalChannel(channel) {
 				return path, false
@@ -348,13 +348,19 @@ var builtinAIProtocols = []aiProtocolAdapter{
 			return falUpstreamPath(modelName, path)
 		},
 		prepare: prepareFalRequest,
+		// [CUSTOM] Fal 是队列模型：提交只回 request_id，产物要再轮询一次。
+		// 账号渠道（登录后）走的是画布后端代理，前端直连适配器不参与，
+		// 因此必须在这里替用户把队列跑完，否则画布只会拿到一个"没有图片"的响应。
+		copyResponse:  copyFalImageResponse,
+		videoResponse: falVideoResponse,
+		videoError:    readFalVideoError,
 		uploads: func(model.ModelChannel, map[string]bool) (map[string]directAIUpload, error) {
 			// Fal 的模型输入普遍接受 data URI，本地参考素材直接内联，无需上传接口。
 			return nil, nil
 		},
 	},
 	{
-		id:   service.ModelChannelProtocolReplicate,
+		id: service.ModelChannelProtocolReplicate,
 		path: func(channel model.ModelChannel, modelName string, path string) (string, bool) {
 			if !service.IsReplicateChannel(channel) {
 				return path, false
@@ -362,6 +368,10 @@ var builtinAIProtocols = []aiProtocolAdapter{
 			return replicateUpstreamPath(modelName, path)
 		},
 		prepare: prepareReplicateRequest,
+		// [CUSTOM] 同 Fal：Replicate 也是异步预测，代理模式下需要后端接力轮询。
+		copyResponse:  copyReplicateImageResponse,
+		videoResponse: replicateVideoResponse,
+		videoError:    readReplicateVideoError,
 		uploads: func(channel model.ModelChannel, kinds map[string]bool) (map[string]directAIUpload, error) {
 			// Replicate 的 data URL 只适用于 256KB 以内的文件，更大的参考素材需先上传到 Files 接口。
 			uploads := map[string]directAIUpload{}
