@@ -124,7 +124,7 @@ func init() {
 		request.Header.Set("Authorization", FalAuthorizationHeader(channel.APIKey))
 	}
 	fal.models = func(model.ModelChannel) ([]string, error) {
-		return nil, safeMessageError{message: "Fal.ai 没有统一的模型列表接口，请手动填写模型路径（如 fal-ai/flux/dev），模型专属参数可用 ?key=value 追加。"}
+		return FalModels(), nil
 	}
 	fal.testModel = func(model.ModelChannel, string) (string, error) {
 		return "Fal.ai 模型请在图片或视频创作台发起一次生成验证。", nil
@@ -135,7 +135,7 @@ func init() {
 	// 地址沿用 OpenAI 的 /v1 归一化逻辑（默认 baseUrl 已带 /v1）。
 	replicate := compatible
 	replicate.models = func(model.ModelChannel) ([]string, error) {
-		return nil, safeMessageError{message: "Replicate 模型请在模型列表中手动填写，格式为 owner/name，非官方模型还需版本号（owner/name:versionhash 或 ?version=hash）。"}
+		return ReplicateModels(), nil
 	}
 	replicate.testModel = func(model.ModelChannel, string) (string, error) {
 		return "Replicate 模型请在图片或视频创作台发起一次生成验证。", nil
@@ -154,6 +154,10 @@ var modelDiscoveryRules = []modelProtocolRule{
 	{ModelChannelProtocolMiMo, func(channel model.ModelChannel, _ string) bool { return IsMiMoChannel(channel) }},
 	{ModelChannelProtocolArk, func(channel model.ModelChannel, _ string) bool { return IsArkChannel(channel) }},
 	{ModelChannelProtocolKIE, func(channel model.ModelChannel, _ string) bool { return isKIEAdminChannel(channel) }},
+	// [CUSTOM] 缺了这两条会让 Fal / Replicate 回落到 OpenAI 的 /models，
+	// 打到 queue.fal.run/models 之类的地址上拿到 404。
+	{ModelChannelProtocolFal, func(channel model.ModelChannel, _ string) bool { return IsFalChannel(channel) }},
+	{ModelChannelProtocolReplicate, func(channel model.ModelChannel, _ string) bool { return IsReplicateChannel(channel) }},
 }
 
 var modelConfigTestRules = []modelProtocolRule{
@@ -163,6 +167,9 @@ var modelConfigTestRules = []modelProtocolRule{
 		return strings.EqualFold(strings.TrimSpace(channel.Protocol), ModelChannelProtocol88API)
 	}},
 	{ModelChannelProtocolArk, func(channel model.ModelChannel, _ string) bool { return IsArkChannel(channel) }},
+	// [CUSTOM] 同上：不加这两条，「测试渠道」会拿 OpenAI 的 chat/completions 去测 Fal / Replicate。
+	{ModelChannelProtocolFal, func(channel model.ModelChannel, _ string) bool { return IsFalChannel(channel) }},
+	{ModelChannelProtocolReplicate, func(channel model.ModelChannel, _ string) bool { return IsReplicateChannel(channel) }},
 }
 
 var modelGenerationTestRules = []modelProtocolRule{

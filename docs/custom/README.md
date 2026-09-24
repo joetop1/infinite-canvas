@@ -51,7 +51,7 @@ git diff --numstat upstream/main..custom
 | `web/src/services/api/protocols/direct-registry.ts` | 注册表追加 `fal` / `replicate` | 4 行 |
 | `web/src/lib/model-channel.ts` | `modelChannelProtocols` 追加两个协议项 | 2 行 |
 | `handler/model_protocol.go` | `builtinAIProtocols` 追加 `fal` / `replicate` 适配器 | 36 行 |
-| `service/model_protocol.go` | 2 个协议常量、`modelProtocolIDs` 加项、注册逻辑与 3 个新函数 | 54 增 / 8 改 |
+| `service/model_protocol.go` | 2 个协议常量、`modelProtocolIDs` 加项、注册逻辑与 3 个新函数；`modelDiscoveryRules` 与 `modelConfigTestRules` 各补 `fal` / `replicate` 两条 | 61 增 / 8 改 |
 | `web/src/lib/model-channel.test.ts`、`web/src/services/api/protocols/direct-registry.test.ts`、`handler/model_protocol_direct_test.go` | 断言表追加用例（不改既有断言） | — |
 
 **除以上文件外，任何上游文件都不应出现自有改动。** 若发现必须新增挂载点，先在本文件登记，再动手。

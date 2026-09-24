@@ -19,7 +19,7 @@
 | `web/src/lib/model-channel.test.ts` | 9 | 1 | 1 行行内改写 |
 | `handler/model_protocol.go` | 36 | 0 | 纯新增 |
 | `handler/model_protocol_direct_test.go` | 84 | 0 | 纯新增 |
-| `service/model_protocol.go` | 54 | 8 | 8 行行内改写（7 行是 gofmt 对齐，1 行是列表加项） |
+| `service/model_protocol.go` | 61 | 8 | 8 行行内改写（7 行是 gofmt 对齐，1 行是列表加项） |
 
 无一处是净删除。删除行分两类，都可逐行对照：
 
@@ -42,13 +42,60 @@
 | `web/src/lib/model-channel.ts` | `modelChannelProtocols` 数组 | 追加 `fal` / `replicate` 两条协议项（纯新增 2 行） |
 | `handler/model_protocol.go` | `builtinAIProtocols` 表 | 追加 `fal` / `replicate` 两个适配器（纯新增 36 行，插在 `model:agnes` 之前） |
 | `service/model_protocol.go` | 常量块与 `init()` 注册表 | 追加 2 个协议常量、2 个 `modelProtocolIDs` 项、2 段注册逻辑（含 3 个新函数 `IsFalChannel` / `IsReplicateChannel` / `FalAuthorizationHeader`） |
+| `service/model_protocol.go` | `modelDiscoveryRules` | 追加 `fal` / `replicate` 两条规则（2 行代码 + 2 行注释）。**缺少它们会让"拉取模型列表"回落到 OpenAI 的 `/models`** |
+| `service/model_protocol.go` | `modelConfigTestRules` | 追加 `fal` / `replicate` 两条规则（2 行代码 + 1 行注释），否则"测试渠道"会去打 `chat/completions` |
 | 两个 `*_test.go` | 文件内追加用例 | 纯新增，未改任何既有断言（`direct-registry.test.ts` 有 1 行行内改写：协议白名单加项） |
 
 新增文件（上游不存在，零冲突）：`web/src/services/api/protocols/fal.ts`、
 `web/src/services/api/protocols/replicate.ts`、`handler/fal_request.go`、
-`handler/replicate_request.go`、`handler/direct_model_spec.go`、`docs/custom/FAL-REPLICATE.md`。
+`handler/replicate_request.go`、`handler/direct_model_spec.go`、`docs/custom/FAL-REPLICATE.md`、
+`service/custom_direct_models.go`、`service/custom_direct_models_test.go`。
 
 ## 变更记录
+
+### v0.7.1-custom.4 — 修复 Fal/Replicate 渠道「读取模型失败：404」
+
+- **文件**：`service/model_protocol.go`（上游）、新增 `service/custom_direct_models.go` 与 `service/custom_direct_models_test.go`
+- **症状**：建好 Fal.ai 渠道后，点「选择模型 → 拉取模型列表」弹 `读取模型失败：404`，列表为空，渠道配不上模型。
+
+- **根因**：协议**注册了、但没挂进规则链**。
+  `modelProtocolRegistry` 里有 `fal` / `replicate` 两个适配器，`models` 字段也是对的，
+  但 `fetchAdminChannelModels()` 走的是 `matchModelProtocol(modelDiscoveryRules, channel, "")`，
+  而 `modelDiscoveryRules` 里没有这两条。匹配失败后 `matchModelProtocol` **回落到 OpenAI 适配器**，
+  于是去请求 `{baseUrl}/models`——对 Fal 就是 `https://queue.fal.run/models`，404。
+  `modelConfigTestRules` 漏得一样，会让「测试渠道」拿 `chat/completions` 去打这两个平台。
+
+  这个疏漏之所以没被拦住：此前的测试只覆盖报文转译（`handler/`）与前端适配器，
+  而"协议是否登记进三条规则链"没有任何断言。
+
+- **改法**：
+  1. `modelDiscoveryRules` 与 `modelConfigTestRules` 各补 `fal` / `replicate`，各 2 行；
+  2. `models` 由"返回错误提示"改为返回内置清单（新增 `service/custom_direct_models.go`）。
+
+- **为什么用内置清单而不是实时拉取**（均实测确认）：
+  - `api.fal.ai/v1/models` 可匿名读取，但**不支持 category / q / search 过滤**，只有
+    `limit`（上限 200）+ `cursor`，模型总量以千计——实测翻到第 14 页、1400 条时仍未结束。
+    整份拉取既慢，几千项的下拉框也无法使用。
+  - Replicate 的 `GET /v1/models` 需要鉴权（无鉴权返回 401），且只返回**当前账号自建**的模型，
+    拿不到公开目录。
+  - 因此沿用上游 `kieMarketModels()` / `MiMoModels()` 的内置清单做法。
+
+- **清单可信度**：不靠印象拼名字，逐个做可达性探测——Fal 用 `fal.ai/models/{endpoint_id}`、
+  Replicate 用 `replicate.com/{owner}/{name}`，并用**故意写错的名字做反向对照**（确实返回 404，
+  证明探测有效）。据此剔除了 `kwaivgi/kling-v1.6-standard`（404，正确名字是 `kwaivgi/kling-v2.1`）、
+  `luma/ray`（404）等失效项。最终 Fal 24 个、Replicate 25 个。
+
+- **新增回归测试**（`service/custom_direct_models_test.go`）：
+  - `TestCustomDirectModelDiscoveryDoesNotFallBackToOpenAI` —— 把上游 HTTP 客户端换成
+    "一旦被调用就报错"的桩。清单是静态的，只要触发网络就说明发生了回落。
+    **已反向验证**：临时移除那两条规则后测试立即失败，打印
+    「模型发现发起了网络请求，说明回落到 OpenAI 的 /models 了」；恢复后通过。
+  - `TestCustomDirectChannelConfigTestDoesNotCallOpenAI` —— 同一手法守住 `modelConfigTestRules`。
+  - `TestCustomDirectModelListShape` —— 断言清单非空、无重复、Fal 形如 `fal-ai/xxx`、
+    Replicate 形如 `owner/name`（内置项不带 `:version`）。名字最终会原样拼进请求地址，
+    写错一个字符就等于让用户白跑一次生成。
+
+- **验证**：`go vet ./...` 无输出、`go test ./...` 全绿（service 包新增 3 例）。
 
 ### 接入 Fal.ai / Replicate 渠道
 
@@ -93,9 +140,8 @@
   3. `requestDirectJSON` 容忍 **202** —— 原先 `!response.ok` 一律抛错，会把 Fal 的"仍在排队"当成失败。
 
 - **有意做的取舍**：
-  - **不实现模型列表发现**。Fal 没有统一的模型列表接口；Replicate 的 `/v1/models` 虽然存在，
-    但未经验证的解析逻辑一旦出错会给出误导性结果。两家都改为返回一句**明确的提示文案**
-    （沿用上游 Ark Agent Plan 的既有做法），引导用户在"输入模型名称"里手填。
+  - **模型列表发现**：初版把 `models` 写成"返回一句提示文案"，但漏了把它挂进模型发现规则链，
+    导致读取模型时 404 —— 已在 `v0.7.1-custom.4` 修正为内置清单。
   - **参考音频直接报错**，不静默丢弃。附了音频却悄悄不生效，比明确报错更难排查。
   - 不映射 `quality` / `resolution_name` / `preset` 等平台间无统一名字的字段，需要就用 query 手动传。
 
