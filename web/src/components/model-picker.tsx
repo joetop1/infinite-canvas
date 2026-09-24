@@ -7,12 +7,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { useAutoDLWorkflowNames } from "@/hooks/use-autodl-workflow";
 import { cn } from "@/lib/utils";
 import { filterModelsByCapability, normalizeLocalChannels, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { isFalTextToVideoModel } from "@/lib/video-model-capabilities";
 
 type ModelPickerProps = {
     config: AiConfig;
     value?: string;
     channelId?: string;
     capability?: ModelCapability;
+    hasImageReferences?: boolean;
     onChange: (model: string, channelId?: string) => void;
     className?: string;
     fullWidth?: boolean;
@@ -20,7 +22,7 @@ type ModelPickerProps = {
     onMissingConfig?: () => void;
 };
 
-export function ModelPicker({ config, value, channelId, capability, onChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, channelId, capability, hasImageReferences = false, onChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const channelOptions = useMemo(() => {
@@ -29,9 +31,10 @@ export function ModelPicker({ config, value, channelId, capability, onChange, cl
                 ? config.publicChannels.map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "云端渠道", baseUrl: channel.baseUrl, models: channel.models }))
                 : normalizeLocalChannels(config).map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "本地渠道", baseUrl: channel.baseUrl, models: channel.models }));
         const models = channels.flatMap((channel) => (channel.models ?? []).map((model) => ({ key: `${channel.id}::${model}`, channelId: channel.id, channelName: channel.name, protocol: channel.protocol, baseUrl: channel.baseUrl, model })));
-        if (!capability) return models;
-        return models.filter((item) => filterModelsByCapability([item.model], capability, item.protocol || "").length > 0);
-    }, [capability, config]);
+        const compatibleModels = models.filter((item) => !(hasImageReferences && isFalTextToVideoModel(item.model, item.protocol || "")));
+        if (!capability) return compatibleModels;
+        return compatibleModels.filter((item) => filterModelsByCapability([item.model], capability, item.protocol || "").length > 0);
+    }, [capability, config, hasImageReferences]);
     const modelLabel = useAutoDLWorkflowNames(channelOptions);
     const currentOption = useMemo(() => {
         if (!value) return undefined;

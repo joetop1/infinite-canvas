@@ -205,7 +205,7 @@ export default function AdminSettingsPage() {
         closeChannelDrawer();
     };
 
-    const fetchChannelModelList = async () => {
+    const fetchChannelModelList = async (query: string) => {
         if (!token) return;
         const channel = channelForm.getFieldsValue();
         if (!channel?.baseUrl) {
@@ -216,7 +216,7 @@ export default function AdminSettingsPage() {
             message.warning("请先填写 API Key");
             return;
         }
-        return fetchChannelModels(token, { index: editingChannelIndex ?? undefined, channel: normalizeChannel(channel) });
+        return fetchChannelModels(token, { index: editingChannelIndex ?? undefined, channel: normalizeChannel(channel), query });
     };
 
     const openChannelModelSelector = () => setIsModelSelectorOpen(true);
@@ -910,6 +910,7 @@ export default function AdminSettingsPage() {
                 {isModelSelectorOpen ? (
                     <ChannelModelSelectorModal
                         channel={channelForm.getFieldsValue()}
+                        supportsOnlineSearch
                         models={channelForm.getFieldValue("models") || []}
                         sourceModels={knownModels}
                         onCancel={closeChannelModelSelector}

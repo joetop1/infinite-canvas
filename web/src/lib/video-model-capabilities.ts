@@ -10,6 +10,10 @@ export function isAgnesVideoV25Model(modelName: string) {
     return modelKey(modelName) === "agnes-video-2-5";
 }
 
+export function isFalTextToVideoModel(modelName: string, protocol: string) {
+    return protocol === "fal" && /\/text-to-video(?:\?|$)/i.test(modelName);
+}
+
 export const COGVIDEOX3_DURATIONS = ["5", "10"] as const;
 
 export function normalizeCogVideoX3Duration(value: string) {

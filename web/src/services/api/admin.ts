@@ -347,6 +347,7 @@ export type AdminChannelActionRequest = {
     index?: number;
     channel: AdminModelChannel;
     model?: string;
+    query?: string;
 };
 
 export async function fetchChannelModels(token: string, payload: AdminChannelActionRequest) {

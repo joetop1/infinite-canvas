@@ -12,6 +12,7 @@ type adminChannelActionRequest struct {
 	Index   *int               `json:"index"`
 	Channel model.ModelChannel `json:"channel"`
 	Model   string             `json:"model"`
+	Query   string             `json:"query"`
 }
 
 func Settings(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +47,7 @@ func AdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 func AdminChannelModels(w http.ResponseWriter, r *http.Request) {
 	var request adminChannelActionRequest
 	_ = json.NewDecoder(r.Body).Decode(&request)
-	models, err := service.AdminChannelModels(request.Index, request.Channel)
+	models, err := service.AdminChannelModels(request.Index, request.Channel, request.Query)
 	if err != nil {
 		FailError(w, err)
 		return

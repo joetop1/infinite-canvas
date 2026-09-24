@@ -41,27 +41,21 @@ kwaivgi/kling-v1.6-standard?image_field=start_image&duration=10
 | Fal.ai | `https://queue.fal.run` | `Authorization: Key <key>` | https://fal.ai/dashboard/keys |
 | Replicate | `https://api.replicate.com/v1` | `Authorization: Bearer <key>` | https://replicate.com/account/api-tokens |
 
-- 点"获取模型"会列出内置的常用模型清单（见下），勾选保存即可；清单外的模型在
-  "输入模型名称"里直接键入路径添加，格式见第三节。
+- Fal / Replicate 渠道在管理页的模型选择器中输入关键词后点“在线搜索”，可查询平台公开目录；结果需手动勾选并确认才会加入渠道。清单外的模型也可以在“输入模型名称”里直接键入路径添加，格式见第三节。
 - Fal 的 Key 直接粘贴原始值就行，不需要自己加 `Key ` 前缀。
 
 ### 内置模型清单
 
-两个平台都**没有"按 Key 列出可用模型"的接口**，所以画布内置了一份常用清单：
+模型选择器保留一份常用清单作为快速入口；完整公开目录按需在线搜索，不会一次性拉取数千条：
 
 | 平台 | 数量 | 覆盖 |
 |---|---|---|
 | Fal.ai | 24 | flux 全系、nano-banana、Kling、MiniMax、Wan、Seedance、Veo |
 | Replicate | 25 | flux 全系、Imagen、Seedream、GPT-Image、Kling、Veo、Wan |
 
-清单里的名字都做过存在性验证（详见本节末），点"获取模型"即可看到并勾选。
-
-**为什么不做成实时拉取**：
-
-- Fal 的 `queue.fal.run` 下没有 `/models` 路由；`api.fal.ai/v1/models` 虽然能匿名读取，
-  但不支持 category / 关键词过滤，只能 `limit` + `cursor` 翻页，模型总量以千计
-  （实测翻到第 14 页、1400 条仍未结束）。整份拉下来既慢，几千项的下拉框也无法使用。
-- Replicate 的 `GET /v1/models` 只返回**当前账号自建**的模型，拿不到公开目录。
+清单里的名字都做过存在性验证（详见本节末）。在线搜索通过平台目录查询：Fal 使用
+`api.fal.ai/v1/models` 的关键词过滤；Replicate 使用 `GET /v1/search`，每次最多返回 50 个模型。
+搜索结果不是对某个 API Key 的权限或可用性保证，具体调用能力仍以模型自己的输入 schema 和平台权限为准。
 
 **验证方式**：Fal 用 `fal.ai/models/{endpoint_id}`、Replicate 用 `replicate.com/{owner}/{name}`
 探测可达性，并用故意写错的名字做反向对照（确实返回 404），确认探测有效。

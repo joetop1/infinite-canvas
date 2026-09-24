@@ -64,12 +64,12 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 	return hidePrivateAPIKeys(result), err
 }
 
-func AdminChannelModels(index *int, channel model.ModelChannel) ([]string, error) {
+func AdminChannelModels(index *int, channel model.ModelChannel, query ...string) ([]string, error) {
 	resolved, err := resolveAdminChannel(index, channel)
 	if err != nil {
 		return nil, err
 	}
-	return fetchAdminChannelModels(resolved)
+	return fetchAdminChannelModels(resolved, query...)
 }
 
 func AdminTestChannelModel(index *int, channel model.ModelChannel, modelName string) (string, error) {
@@ -491,7 +491,15 @@ func resolveAdminChannel(index *int, channel model.ModelChannel) (model.ModelCha
 	return resolved, nil
 }
 
-func fetchAdminChannelModels(channel model.ModelChannel) ([]string, error) {
+func fetchAdminChannelModels(channel model.ModelChannel, query ...string) ([]string, error) {
+	if len(query) > 0 && strings.TrimSpace(query[0]) != "" {
+		if IsFalChannel(channel) {
+			return searchFalModels(channel, strings.TrimSpace(query[0]))
+		}
+		if IsReplicateChannel(channel) {
+			return searchReplicateModels(channel, strings.TrimSpace(query[0]))
+		}
+	}
 	adapter, _ := matchModelProtocol(modelDiscoveryRules, channel, "")
 	return adapter.models(channel)
 }

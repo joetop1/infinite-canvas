@@ -9,15 +9,16 @@ type ModelSelectTabKey = "new" | "current";
 
 type ChannelModelSelectorModalProps = {
     channel?: { protocol?: string; baseUrl?: string };
+    supportsOnlineSearch?: boolean;
     models: string[];
     sourceModels?: string[];
     onCancel: () => void;
     onConfirm: (models: string[]) => void;
-    onFetchModels: () => Promise<string[] | undefined>;
+    onFetchModels: (query: string) => Promise<string[] | undefined>;
     onModelsFetched?: (models: string[]) => void;
 };
 
-export function ChannelModelSelectorModal({ channel, models, sourceModels = [], onCancel, onConfirm, onFetchModels, onModelsFetched }: ChannelModelSelectorModalProps) {
+export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = false, models, sourceModels = [], onCancel, onConfirm, onFetchModels, onModelsFetched }: ChannelModelSelectorModalProps) {
     const { message } = App.useApp();
     const modelLabel = useAutoDLWorkflowNames(channel ? [channel] : []);
     const [source, setSource] = useState(() => uniqueModels(sourceModels));
@@ -35,9 +36,14 @@ export function ChannelModelSelectorModal({ channel, models, sourceModels = [], 
     const activeSelectedCount = activeModels.filter((model) => selected.includes(model)).length;
 
     const fetchModels = async () => {
+        const remoteSearch = supportsOnlineSearch && (channel?.protocol === "fal" || channel?.protocol === "replicate");
+        if (remoteSearch && !keyword.trim()) {
+            message.info("请输入模型名称或关键词，再搜索服务商的公开模型目录");
+            return;
+        }
         setFetching(true);
         try {
-            const fetchedModels = await onFetchModels();
+            const fetchedModels = await onFetchModels(keyword.trim());
             if (fetchedModels === undefined) return;
             onModelsFetched?.(fetchedModels);
             if (!fetchedModels.length) {
@@ -47,11 +53,11 @@ export function ChannelModelSelectorModal({ channel, models, sourceModels = [], 
             const current = uniqueModels(selected);
             setExisting(current);
             setSource(uniqueModels(fetchedModels));
-            setSelected(uniqueModels([...fetchedModels, ...current]));
+            setSelected(current);
             setKeyword("");
             setNewModel("");
             setActiveTab("new");
-            message.success(`已获取 ${fetchedModels.length} 个模型，请选择后确认`);
+            message.success(`搜索到 ${fetchedModels.length} 个模型，请勾选后确认`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取模型失败");
         } finally {
@@ -103,12 +109,21 @@ export function ChannelModelSelectorModal({ channel, models, sourceModels = [], 
         >
             <Flex vertical gap={14}>
                 <Flex gap={12} wrap>
-                    <Input.Search placeholder="搜索模型" allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} style={{ flex: "1 1 260px" }} />
+                    <Input.Search
+                        placeholder={supportsOnlineSearch && (channel?.protocol === "fal" || channel?.protocol === "replicate") ? "输入关键词，搜索服务商全部公开模型" : "搜索模型"}
+                        allowClear
+                        value={keyword}
+                        onChange={(event) => setKeyword(event.target.value)}
+                        onSearch={() => {
+                            if (supportsOnlineSearch && (channel?.protocol === "fal" || channel?.protocol === "replicate")) void fetchModels();
+                        }}
+                        style={{ flex: "1 1 260px" }}
+                    />
                     <Space.Compact style={{ flex: "1 1 320px" }}>
                         <Input value={newModel} placeholder={channel?.protocol === "autodl" ? "输入工作流 ID" : "输入模型名称"} onChange={(event) => setNewModel(event.target.value)} onPressEnter={addModel} />
                         <Button onClick={addModel}>增加模型</Button>
                         <Button icon={<ReloadOutlined />} loading={fetching} onClick={() => void fetchModels()}>
-                            拉取模型列表
+                            {supportsOnlineSearch && (channel?.protocol === "fal" || channel?.protocol === "replicate") ? "在线搜索" : "拉取模型列表"}
                         </Button>
                     </Space.Compact>
                 </Flex>

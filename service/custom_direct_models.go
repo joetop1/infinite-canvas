@@ -1,16 +1,19 @@
 package service
 
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+
+	"github.com/tigerowo/infinite-canvas/model"
+)
+
 // [CUSTOM] Fal.ai 与 Replicate 的内置模型清单。
 //
-// 为什么不做成「实时拉取」：
-//   - Fal：queue.fal.run 下没有 /models 路由（旧实现打到这里拿到 404）。
-//     api.fal.ai/v1/models 虽然可以匿名读取，但不支持 category / q / search 过滤，
-//     只能靠 limit + cursor 翻页，模型总量以千计（翻到第 14 页 1400 条仍未结束）。
-//     整份拉下来既慢，下拉框里几千项也无法使用。
-//   - Replicate：GET /v1/models 只返回当前账号自建的模型，拿不到公开目录。
-//
-// 因此沿用 KIE / MiMo / MiniMax 的内置清单做法，列出常用的主流模型；
-// 用户仍可在渠道里手动补充任意模型名（选择弹窗自带输入框）。
+// 内置清单作为快速入口；Fal / Replicate 的完整公开目录通过搜索接口按关键词查询。
 //
 // 清单内的名称均已逐一验证存在：
 //   - Fal 用 fal.ai/models/{endpoint_id} 页面探测，反向对照（故意写错的名字返回 404）确认有效；
@@ -88,4 +91,131 @@ func ReplicateModels() []string {
 		"wan-video/wan-2.5-i2v",
 		"bytedance/seedance-1-pro",
 	}
+}
+
+func searchFalModels(channel model.ModelChannel, query string) ([]string, error) {
+	values := url.Values{"q": {query}, "limit": {"100"}, "status": {"active"}}
+	request, err := http.NewRequest(http.MethodGet, "https://api.fal.ai/v1/models?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", FalAuthorizationHeader(channel.APIKey))
+	response, err := adminModelHTTPClient.Do(request)
+	if err != nil {
+		return nil, safeMessageError{message: "搜索 Fal 模型失败：上游接口无响应或网络不可达"}
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, safeMessageError{message: "搜索 Fal 模型失败：无法读取上游响应"}
+	}
+	if response.StatusCode >= http.StatusBadRequest {
+		return nil, readAdminChannelError(body, response.StatusCode, "搜索 Fal 模型失败")
+	}
+	var payload struct {
+		Models []struct {
+			EndpointID string `json:"endpoint_id"`
+			ID         string `json:"id"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, safeMessageError{message: "搜索 Fal 模型失败：无法解析上游响应"}
+	}
+	models := make([]string, 0, len(payload.Models))
+	for _, item := range payload.Models {
+		if modelID := firstNonEmpty(strings.TrimSpace(item.EndpointID), strings.TrimSpace(item.ID)); modelID != "" {
+			models = append(models, modelID)
+		}
+	}
+	return uniqueSortedModels(models), nil
+}
+
+func searchReplicateModels(channel model.ModelChannel, query string) ([]string, error) {
+	parsed, err := url.Parse(BuildModelChannelURL(channel, "/search"))
+	if err != nil {
+		return nil, err
+	}
+	values := parsed.Query()
+	values.Set("query", query)
+	values.Set("limit", "50")
+	parsed.RawQuery = values.Encode()
+	request, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	SetModelChannelAuthHeader(request, channel)
+	response, err := adminModelHTTPClient.Do(request)
+	if err != nil {
+		return nil, safeMessageError{message: "搜索 Replicate 模型失败：上游接口无响应或网络不可达"}
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, safeMessageError{message: "搜索 Replicate 模型失败：无法读取上游响应"}
+	}
+	if response.StatusCode >= http.StatusBadRequest {
+		return nil, readAdminChannelError(body, response.StatusCode, "搜索 Replicate 模型失败")
+	}
+	var payload struct {
+		Results []json.RawMessage `json:"results"`
+		Models  []json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, safeMessageError{message: "搜索 Replicate 模型失败：无法解析上游响应"}
+	}
+	results := payload.Results
+	if len(results) == 0 {
+		results = payload.Models
+	}
+	models := make([]string, 0, len(results))
+	for _, result := range results {
+		if modelID := replicateSearchModelID(result); modelID != "" {
+			models = append(models, modelID)
+		}
+	}
+	return uniqueSortedModels(models), nil
+}
+
+func uniqueSortedModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	result := make([]string, 0, len(models))
+	for _, modelID := range models {
+		if modelID == "" {
+			continue
+		}
+		if _, exists := seen[modelID]; exists {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		result = append(result, modelID)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func replicateSearchModelID(raw json.RawMessage) string {
+	var item map[string]json.RawMessage
+	if json.Unmarshal(raw, &item) != nil {
+		return ""
+	}
+	var owner, name string
+	_ = json.Unmarshal(item["owner"], &owner)
+	_ = json.Unmarshal(item["name"], &name)
+	if owner != "" && name != "" {
+		modelID := owner + "/" + name
+		var version struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(item["latest_version"], &version)
+		if version.ID != "" {
+			modelID += ":" + version.ID
+		}
+		return modelID
+	}
+	for _, key := range []string{"model", "result", "data"} {
+		if nested := replicateSearchModelID(item[key]); nested != "" {
+			return nested
+		}
+	}
+	return ""
 }
