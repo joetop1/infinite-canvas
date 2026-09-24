@@ -8,7 +8,7 @@
 
 ```bash
 git push
-git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2
+git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3
 ```
 
 **2) 等 Actions 变绿**
@@ -18,7 +18,7 @@ https://github.com/joetop1/infinite-canvas/actions —— 两个 `build` 作业�
 **3) 宝塔面板「容器编排」里编辑配置，只改 `image` 一行**，并删掉 `build` 段与 `pull_policy: always`：
 
 ```yaml
-    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.2
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.3
 ```
 
 保存 → 重启容器。**反向代理配置不用动**（容器名与端口都未变）。
@@ -109,16 +109,16 @@ docker compose -f docker-compose.custom.yml logs -f --tail=50
 
 ```bash
 git checkout custom && git pull
-git tag v0.7.1-custom.2
-git push origin v0.7.1-custom.2
+git tag v0.7.1-custom.3
+git push origin v0.7.1-custom.3
 ```
 
 该工作流产出两个标签，指向同一个 digest：
 
 | 标签 | 来源 | 说明 |
 |---|---|---|
-| `v0.7.1-custom.2` | `type=ref,event=tag` | 与 git 标签同名，**推荐固定使用这个** |
-| `<短 sha>`（如 `308647a`） | `type=sha,prefix=` | 按提交哈希，便于溯源 |
+| `v0.7.1-custom.3` | `type=ref,event=tag` | 与 git 标签同名，**推荐固定使用这个** |
+| `<短 sha>`（如 `d13cff2`） | `type=sha,prefix=` | 按提交哈希，便于溯源 |
 | `latest` | metadata-action 的 `flavor: latest=auto` 自动追加 | **每次构建都会覆盖**，是把双刃剑，见下方警告 |
 
 ### 两个必须守住的纪律
@@ -214,6 +214,32 @@ docker image inspect ghcr.io/joetop1/infinite-canvas:$TAG \
 > 分不清是路由没实现还是文件被清。要判断路由是否存在，**用一条刚建的新任务**，
 > 或用一个格式合法但不存在的假 ID——后者的 404 一定是"路由或任务不存在"，与过期无关。
 
+### 5.3 Fal.ai / Replicate 渠道验证（`v0.7.1-custom.3` 起）
+
+这两个平台**不需要重建镜像就能验证通不通**，因为它不走画布后端代理：
+请求由浏览器直连平台，画布后端只提供参数转译。所以先在界面上把渠道建好再测一次生成。
+
+1. 「设置 → 模型渠道 → 新增」：协议选 **Fal.ai**，API Key 粘贴 fal 后台的原始 key，保存。
+2. 在模型列表里**手动输入** `fal-ai/flux/dev`（该渠道没有模型列表接口，会提示手填，属正常）。
+3. 画布跑一次**纯文生图**，只填 prompt，不要加参考图——这是最小请求。
+4. 预期：几秒到几十秒后出图。
+
+| 现象 | 原因 | 下一步 |
+|---|---|---|
+| 出图 | 通了 | 再试带参考图的模型、视频模型、Replicate |
+| `401` / `Invalid API key` | key 不对 | Fal 直接粘贴原始 key（程序会补 `Key ` 前缀）；Replicate 用 `r8_` 开头的 token |
+| `422` / 字段非法 | 该模型输入 schema 与默认映射不同 | 用模型名 query 指定，如 `fal-ai/flux/dev?image_size=landscape_16_9` |
+| `Fal 任务缺少请求 ID 或模型 ID` | 模型名没填或只填了参数 | 见 `FAL-REPLICATE.md` 第三节 |
+| 浏览器控制台报 CORS | 浏览器直连被拦 | 正常网络下不应出现，两者官方 SDK 都支持浏览器直连 |
+| `Fal 渠道暂不支持参考音频` | 附了音频参考 | 改用参考图片或参考视频 |
+
+详细的模型名格式、字段映射表、字段名覆盖键见 **`FAL-REPLICATE.md`**。
+
+> **图片尺寸不会自动传**：画布的宽高比选择器对 Fal/Replicate 的**图片**接口不生效
+> （Fal 用 `image_size` 枚举、Replicate 各模型不同，猜错字段名会让请求 422）。
+> 视频接口的尺寸会自动折成 `aspect_ratio`。需要指定图片尺寸请用 query，例如
+> `fal-ai/flux/dev?image_size=landscape_16_9`。
+
 ## 六、回滚
 
 ```bash
@@ -228,7 +254,7 @@ docker compose -f docker-compose.yml up -d   # 回到上游官方镜像
 ```bash
 ./scripts/sync-upstream.sh                       # 合并上游新版到 custom
 git push                                         # 推代码
-git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2   # 触发构建（标签递增）
+git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3   # 触发构建（标签递增）
 ```
 
 等 Actions 变绿，再按第零节第 3 步重启容器。
@@ -336,7 +362,7 @@ docker port infinite-canvas
 1. 打标签，让 GitHub Actions 构建镜像：
 
 ```bash
-git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2
+git tag v0.7.1-custom.3 && git push origin v0.7.1-custom.3
 ```
 
 2. 等 Actions 跑完（仓库 Actions 面板可见进度，两个架构各一次构建，最后合成多架构清单）。
@@ -345,7 +371,7 @@ git tag v0.7.1-custom.2 && git push origin v0.7.1-custom.2
 ```yaml
 services:
   app:
-    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.2
+    image: ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.3
     container_name: infinite-canvas
     env_file:
       - .env
@@ -393,7 +419,7 @@ services:
 想查**任意标签**的实际摘要（只读，不需要任何凭据）：
 
 ```bash
-TAG=v0.7.1-custom.2
+TAG=v0.7.1-custom.3
 TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:joetop1/infinite-canvas:pull&service=ghcr.io" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
 curl -sI -H "Authorization: Bearer $TOKEN" \
@@ -401,6 +427,55 @@ curl -sI -H "Authorization: Bearer $TOKEN" \
   "https://ghcr.io/v2/joetop1/infinite-canvas/manifests/$TAG" \
   | grep -i docker-content-digest
 ```
+
+### v0.7.1-custom.3 — 2026-09-24
+
+| 项目 | 值 |
+|---|---|
+| 触发 | 推送标签 `v0.7.1-custom.3`（`push` 事件） |
+| 运行 | [Actions run 35951053343](https://github.com/joetop1/infinite-canvas/actions/runs/35951053343) |
+| 源码 | `d13cff2d1dbe77263efe57d6e7b31da692b5e732` |
+| 结果 | 全部成功，4 个作业：`meta` → `build (amd64)` / `build (arm64)` → `merge` |
+| 耗时 | 约 4 分 16 秒 |
+| 镜像 | `ghcr.io/joetop1/infinite-canvas:v0.7.1-custom.3` |
+| 多架构 digest | `sha256:5e7a537d9c41e617995ffd03a926b2ce7234ce3adb9b2e14d0c6e9aa5579456a` |
+| 可见性 | 匿名可拉（无需登录） |
+
+内容：新增 Fal.ai / Replicate 两条直连协议（图片与视频），不改动既有协议的报文与地址。
+使用说明见 `FAL-REPLICATE.md`。
+
+**本次构建出现过一次 amd64 偶发失败，值得记下来**：首次推送标签（run `35950649958`）时
+`build (linux/amd64)` 在 `RUN bun run build` 步骤以 **exit code 132（SIGILL，非法指令）**
+失败，而同一份源码的 arm64 作业成功。删除并重新推送同一标签后**两个架构均成功**，
+因此判定为 runner 侧的偶发问题（`Illegal instruction` 通常是 Next.js 的 SWC 原生二进制
+在不支持相应指令集的机器上崩溃），与源码无关。
+
+> 处理这类失败的顺序：**先看是哪一步失败、退出码是多少**（`/actions/runs/<id>/jobs` 看步骤，
+> `/check-runs/<id>/annotations` 能拿到失败行与错误原文，无需登录凭据）；
+> **只有两个架构同时失败**或**重跑后仍在同一步失败**，才去怀疑自己的改动。
+
+各层摘要（`docker` 显示的"镜像 ID"会随**镜像存储后端**而异，见 5.1 节说明）：
+
+| 层级 | 摘要 |
+|---|---|
+| 多架构 index（总清单） | `sha256:5e7a537d9c41e617995ffd03a926b2ce7234ce3adb9b2e14d0c6e9aa5579456a` |
+| linux/amd64 子 manifest | `sha256:2842fad32db0a2ba29b9a1242bfc70d7ef122156de7cd28d139f63a99d81ab29` |
+| linux/amd64 config digest | `sha256:70e9552dc42aa3f2318f5eed201e81716cb17eb2579953668f072363d12d37a0` |
+| linux/arm64 子 manifest | `sha256:d0336edc7cb204aba9e058e0e7472b4bea71f5af71068f712931eb5ef377fcfd` |
+
+镜像内元数据（已核验）：
+
+```
+org.opencontainers.image.revision = d13cff2d1dbe77263efe57d6e7b31da692b5e732
+org.opencontainers.image.version  = v0.7.1-custom.3
+org.opencontainers.image.created  = 2026-09-24T03:20:45.973Z
+```
+
+> 注意：打标签之后又推了一次**纯文档**提交（`c276bab`，更新挂载点清单与说明），
+> 它**不在镜像里**，也不影响功能。`custom` 分支 HEAD 因此比标签新一个文档提交，
+> 这是有意的——镜像对应的是功能提交。
+
+`latest` 标签本次也指向 custom.3。但**不要依赖它**，理由见第四节的纪律。
 
 ### v0.7.1-custom.2 — 2026-09-21
 
