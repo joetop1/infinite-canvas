@@ -19,7 +19,7 @@ import (
 
 const userModelChannelHeader = "X-User-Model-Channel-ID"
 
-func selectAIRequestChannel(user model.AuthUser, modelName string, channelID string, userChannelID string) (model.ModelChannel, string, error) {
+func selectAIRequestChannel(user model.AuthUser, modelName string, channelID string, userChannelID string, publicOnly bool) (model.ModelChannel, string, error) {
 	userChannelID = strings.TrimSpace(userChannelID)
 	if userChannelID != "" {
 		channel, err := service.SelectUserLocalModelChannelForModel(user.ID, modelName, userChannelID)
@@ -28,14 +28,14 @@ func selectAIRequestChannel(user model.AuthUser, modelName string, channelID str
 	if !service.UserCanUseRemoteModelChannel(user) {
 		return model.ModelChannel{}, "", fmt.Errorf("当前账号未开放云端渠道")
 	}
-	channel, err := service.SelectModelChannelForModel(modelName, channelID)
+	channel, err := service.SelectModelChannelForModel(modelName, channelID, publicOnly)
 	return channel, "", err
 }
 
 func failAIChannelSelect(w http.ResponseWriter, err error, fallback string) {
 	message := strings.TrimSpace(err.Error())
 	switch message {
-	case "当前账号未开放云端渠道", "请先登录", "缺少模型名称", "缺少模型渠道", "本地渠道不存在", "本地渠道配置不完整", "本地渠道不支持该模型", "指定模型渠道不可用":
+	case "当前账号未开放云端渠道", "请先登录", "缺少模型名称", "缺少模型渠道", "本地渠道不存在", "本地渠道配置不完整", "本地渠道不支持该模型", "指定模型渠道不可用", "模型未开放":
 		Fail(w, message)
 	default:
 		Fail(w, fallback)
@@ -106,7 +106,7 @@ func proxyAIGetRequest(w http.ResponseWriter, r *http.Request, path string) {
 	if strings.TrimSpace(modelName) == "" {
 		modelName = "Agnes-Video-V2.0"
 	}
-	channel, _, err := selectAIRequestChannel(user, modelName, r.Header.Get("X-Model-Channel-ID"), r.Header.Get(userModelChannelHeader))
+	channel, _, err := selectAIRequestChannel(user, modelName, r.Header.Get("X-Model-Channel-ID"), r.Header.Get(userModelChannelHeader), false)
 	if err != nil {
 		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
 		failAIChannelSelect(w, err, "AI 接口请求失败")
@@ -135,7 +135,7 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		Fail(w, "未登录或权限不足")
 		return
 	}
-	channel, userChannelID, err := selectAIRequestChannel(user, modelName, r.Header.Get("X-Model-Channel-ID"), r.Header.Get(userModelChannelHeader))
+	channel, userChannelID, err := selectAIRequestChannel(user, modelName, r.Header.Get("X-Model-Channel-ID"), r.Header.Get(userModelChannelHeader), true)
 	if err != nil {
 		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
 		failAIChannelSelect(w, err, "AI 接口请求失败")

@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { App } from "antd";
 
 import { fetchUserConfig } from "@/services/api/user-config";
+import { replaceWorkflowChannels } from "@/services/workflow-channel-storage";
 import { STORAGE_SYNC_FAILED_EVENT, defaultUserStorageProvider, defaultUserWebDAVStorageProvider, saveUserStorageProvider, saveUserWebDAVStorageProvider } from "@/services/image-storage";
-import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -24,6 +25,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const isLoginPage = pathname === "/login" || pathname === "/admin/login";
     const adminRemoteTokenRef = useRef("");
+    const accountSessionRef = useRef({ token, userId: user?.id || "" });
 
     useEffect(() => {
         const onSyncFailed = (event: Event) => {
@@ -42,23 +44,49 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         if (!isLoginPage) void hydrateUser();
     }, [hydrateUser, isLoginPage]);
 
-    useEffect(() => {
-        if (!token || user?.role !== "admin" || adminRemoteTokenRef.current === token) return;
-        adminRemoteTokenRef.current = token;
-        if (channelMode !== "remote") updateConfig("channelMode", "remote");
-    }, [channelMode, token, updateConfig, user?.role]);
+	useEffect(() => {
+		if (!token || user?.role !== "admin" || adminRemoteTokenRef.current === token) return;
+		adminRemoteTokenRef.current = token;
+		if (channelMode !== "remote") updateConfig("channelMode", "remote");
+	}, [channelMode, token, updateConfig, user?.role]);
 
-    useEffect(() => {
+	useLayoutEffect(() => {
+		const previous = accountSessionRef.current;
+		const userId = user?.id || "";
+		if ((previous.token && !token) || (previous.userId && userId && previous.userId !== userId)) {
+			useConfigStore.setState({ config: defaultConfig });
+		} else {
+			updateConfig("workflowSyncTouched", false);
+		}
+		accountSessionRef.current = { token, userId };
+	}, [token, updateConfig, user?.id]);
+
+	useEffect(() => {
         if (!token || !user?.id) return;
-        void fetchUserConfig(token)
-            .then((payload) => {
-                const syncS3 = payload.modelConfig?.syncStorageConfig === true;
+        const accountToken = token;
+        const accountId = user.id;
+        let canceled = false;
+		void fetchUserConfig(accountToken)
+			.then(async (payload) => {
+				if (canceled || useUserStore.getState().token !== accountToken || useUserStore.getState().user?.id !== accountId) return;
+				let workflowsReady = true;
+				const syncS3 = payload.modelConfig?.syncStorageConfig === true;
                 const syncWebDAV = payload.modelConfig?.syncWebDAVStorageConfig === true;
                 if (payload.modelConfig) {
-                    Object.entries(payload.modelConfig)
-                        .forEach(([key, value]) => updateConfig(key as keyof AiConfig, value as never));
-                }
-                updateConfig("syncStorageConfig", syncS3);
+                    const { workflowChannels, ...modelConfig } = payload.modelConfig;
+					if (workflowChannels !== undefined) {
+						try {
+							await replaceWorkflowChannels(accountId, workflowChannels);
+						} catch {
+							workflowsReady = false;
+						}
+					}
+                    if (canceled || useUserStore.getState().token !== accountToken || useUserStore.getState().user?.id !== accountId) return;
+					Object.entries(modelConfig)
+						.forEach(([key, value]) => updateConfig(key as keyof AiConfig, value as never));
+				}
+				updateConfig("workflowSyncTouched", workflowsReady);
+				updateConfig("syncStorageConfig", syncS3);
                 updateConfig("syncWebDAVStorageConfig", syncWebDAV);
                 if (syncS3 && payload.storageProvider?.s3) {
                     saveUserStorageProvider({
@@ -76,6 +104,9 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                 }
             })
             .catch(() => {});
+        return () => {
+            canceled = true;
+        };
     }, [token, updateConfig, user?.id]);
 
     useEffect(() => {

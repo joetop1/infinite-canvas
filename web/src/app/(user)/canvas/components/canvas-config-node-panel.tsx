@@ -40,8 +40,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoFram
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
-    const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
-    const falTextVideoBlocked = mode === "video" && inputSummary.imageCount > 0 && isFalTextToVideoModel(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }));
+    const canGenerate = (mode !== "text" && Boolean(node.metadata?.workflowRef)) || hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+    const falTextVideoBlocked = mode === "video" && !node.metadata?.workflowRef && inputSummary.imageCount > 0 && isFalTextToVideoModel(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }));
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
@@ -107,11 +107,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoFram
             </div>
 
             <div className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "image" || mode === "video" ? "grid-cols-[minmax(0,1fr)_148px_92px]" : mode === "audio" ? "grid-cols-[minmax(0,1fr)_148px]" : "grid-cols-1"}`} onMouseDown={(event) => event.stopPropagation()}>
-                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} channelId={modelChannelId(config, mode)} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability={mode} hasImageReferences={mode === "video" && inputSummary.imageCount > 0} onMissingConfig={() => openConfigDialog(true)} fullWidth />
+                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} channelId={modelChannelId(config, mode)} workflowRef={node.metadata?.workflowRef} onWorkflowChange={mode === "text" ? undefined : (workflowRef) => onConfigChange(node.id, { workflowRef })} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability={mode} hasImageReferences={mode === "video" && inputSummary.imageCount > 0} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
                     <CanvasVideoSettingsPopover config={config} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" frameOptions={videoFrameOptions} resourceOptions={videoResourceOptions} metadata={node.metadata} firstFrameNodeId={node.metadata?.firstFrameNodeId} lastFrameNodeId={node.metadata?.lastFrameNodeId} onFrameChange={(patch) => onConfigChange(node.id, patch)} onMetadataChange={(patch) => onConfigChange(node.id, patch)} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                 ) : mode === "image" ? (
-                    <CanvasImageSettingsPopover config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
+                    <CanvasImageSettingsPopover config={node.metadata?.workflowRef ? { ...config, model: "" } : config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
                 ) : mode === "audio" ? (
                     <CanvasAudioSettingsPopover config={config} resourceOptions={videoResourceOptions} metadata={node.metadata} onMetadataChange={(patch) => onConfigChange(node.id, patch)} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                 ) : null}
@@ -129,8 +129,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoFram
             >
                 <span className="inline-flex items-center gap-1.5">
                     <span className="inline-flex items-center gap-1">
-                        <CreditSymbol />
-                        {credits.toLocaleString()}
+                        {node.metadata?.workflowRef ? "工作流" : <><CreditSymbol />{credits.toLocaleString()}</>}
                     </span>
                     {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />}
                     <span>开始生成</span>
@@ -204,10 +203,10 @@ function modelChannelId(config: AiConfig, mode: CanvasGenerationMode) {
 }
 
 function modePatch(config: AiConfig, mode: CanvasGenerationMode): Partial<CanvasNodeMetadata> {
-    if (mode === "image") return { generationMode: mode, model: config.imageModel, channelId: config.imageChannelId };
-    if (mode === "video") return { generationMode: mode, model: config.videoModel, channelId: config.videoChannelId };
-    if (mode === "text") return { generationMode: mode, model: config.textModel, channelId: config.textChannelId };
-    return { generationMode: mode, model: config.audioModel, channelId: config.audioChannelId || config.activeChannelId };
+    if (mode === "image") return { generationMode: mode, model: config.imageModel, channelId: config.imageChannelId, workflowRef: config.imageWorkflowRef };
+    if (mode === "video") return { generationMode: mode, model: config.videoModel, channelId: config.videoChannelId, workflowRef: config.videoWorkflowRef };
+    if (mode === "text") return { generationMode: mode, model: config.textModel, channelId: config.textChannelId, workflowRef: undefined };
+    return { generationMode: mode, model: config.audioModel, channelId: config.audioChannelId || config.activeChannelId, workflowRef: config.audioWorkflowRef };
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {

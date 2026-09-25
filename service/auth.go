@@ -335,30 +335,36 @@ func AdjustUserCredits(id string, credits float64) (model.User, error) {
 	return user, err
 }
 
-func ConsumeUserCredits(userID string, modelName string, credits float64, path string) error {
+func ConsumeUserCredits(userID string, modelName string, credits float64, path string, task ...any) error {
 	credits = normalizeCredits(credits)
+	var workflowTask any
+	if len(task) > 0 {
+		workflowTask = task[0]
+	}
 	if credits <= 0 {
+		if workflowTask != nil {
+			return repository.InsertWorkflowTask(workflowTask)
+		}
 		return nil
 	}
-	user, ok, err := repository.ConsumeUserCredits(userID, credits, now())
+	timestamp := now()
+	extra, _ := json.Marshal(map[string]string{"model": modelName, "path": path})
+	_, ok, err := repository.ConsumeUserCredits(userID, credits, timestamp, model.CreditLog{
+		ID:        newID("credit"),
+		UserID:    userID,
+		Type:      model.CreditLogTypeAIConsume,
+		Amount:    -credits,
+		Remark:    "调用模型 " + modelName,
+		Extra:     string(extra),
+		CreatedAt: timestamp,
+	}, workflowTask)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return safeMessageError{message: "算力点不足"}
 	}
-	extra, _ := json.Marshal(map[string]string{"model": modelName, "path": path})
-	_, err = repository.SaveCreditLog(model.CreditLog{
-		ID:        newID("credit"),
-		UserID:    userID,
-		Type:      model.CreditLogTypeAIConsume,
-		Amount:    -credits,
-		Balance:   user.Credits,
-		Remark:    "调用模型 " + modelName,
-		Extra:     string(extra),
-		CreatedAt: now(),
-	})
-	return err
+	return nil
 }
 
 func RefundUserCredits(userID string, modelName string, credits float64, path string) error {

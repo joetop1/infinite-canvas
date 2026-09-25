@@ -8,14 +8,16 @@ import { useEffect, useMemo, useState } from "react";
 import { EditorView } from "@uiw/react-codemirror";
 
 import { ChannelModelSelectorModal } from "@/components/channel-model-selector-modal";
+import type { WorkflowChannelSettings } from "@/components/workflow/workflow-channel-pane";
 import { useAutoDLWorkflowNames } from "@/hooks/use-autodl-workflow";
-import { modelChannelApiKeyUrls, modelChannelDefaultBaseUrls, modelChannelProtocolOptions } from "@/lib/model-channel";
+import { isWorkflowProtocol, modelChannelApiKeyUrls, modelChannelDefaultBaseUrls, modelChannelProtocolOptions } from "@/lib/model-channel";
 import { fetchAdminSettings, fetchChannelModels, measureAdminStorageProvider, saveAdminSettings, testChannelModel, type AdminModelChannel, type AdminModelCost, type AdminSettings, type AdminStorageProvider } from "@/services/api/admin";
 import { clearStorageConfigCache as clearMediaStorageConfigCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageConfigCache } from "@/services/image-storage";
 import { useUserStore } from "@/stores/use-user-store";
 
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
+const WorkflowChannelPane = dynamic(() => import("@/components/workflow/workflow-channel-pane").then((module) => module.WorkflowChannelPane), { ssr: false });
 const jsonEditorTheme = EditorView.theme({
     "&": { backgroundColor: "var(--ant-color-bg-container)", color: "var(--ant-color-text)" },
     ".cm-content": { caretColor: "var(--ant-color-text)", padding: "12px 0" },
@@ -33,6 +35,7 @@ const emptySettings: AdminSettings = {
     public: {
         modelChannel: {
             availableModels: [],
+            availableWorkflows: [],
             modelCosts: [],
             channels: [],
             defaultModel: "",
@@ -67,6 +70,7 @@ export default function AdminSettingsPage() {
     const [channelForm] = Form.useForm<AdminModelChannel>();
     const [editingChannelIndex, setEditingChannelIndex] = useState<number | null>(null);
     const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState(false);
+    const [workflowChannelDraft, setWorkflowChannelDraft] = useState<AdminModelChannel>(emptyChannel);
     const [testChannelIndex, setTestChannelIndex] = useState<number | null>(null);
     const [testKeyword, setTestKeyword] = useState("");
     const [selectedTestModels, setSelectedTestModels] = useState<string[]>([]);
@@ -79,6 +83,7 @@ export default function AdminSettingsPage() {
     const [modelCosts, setModelCosts] = useState<AdminModelCost[]>([]);
     const [knownModels, setKnownModels] = useState<string[]>([]);
     const publicModels = Form.useWatch(["public", "modelChannel", "availableModels"], form) || [];
+    const publicWorkflows = Form.useWatch(["public", "modelChannel", "availableWorkflows"], form) || [];
     const storageProviders = Form.useWatch(["private", "storage", "providers"], form) || [];
     const channelProtocol = Form.useWatch("protocol", channelForm);
     const channelBaseUrl = Form.useWatch("baseUrl", channelForm);
@@ -86,6 +91,7 @@ export default function AdminSettingsPage() {
     const publicModelLabel = (model: string) => modelLabel(model, channels.find((channel) => channel.protocol === "autodl" && channel.models.includes(model)));
     const channelApiKeyUrl = channelProtocol ? modelChannelApiKeyUrls[channelProtocol] : undefined;
     const channelModels = useMemo(() => collectChannelModels(channels), [channels]);
+    const channelWorkflows = useMemo(() => collectChannelWorkflows(channels), [channels]);
     const channelTableData = useMemo(() => channels.map((channel, index) => ({ ...channel, _index: index, _rowKey: `${index}-${channel.name}-${channel.baseUrl}` })), [channels]);
     const activeMode = editorMode[activeTab];
     const activeJsonText = jsonText[activeTab];
@@ -186,6 +192,7 @@ export default function AdminSettingsPage() {
         setIsChannelDrawerOpen(true);
         const channel = index === null ? emptyChannel : normalizeChannel(channels[index]);
         channelForm.setFieldsValue(channel);
+        setWorkflowChannelDraft(channel);
         rememberModels(channel.models);
     };
 
@@ -196,7 +203,12 @@ export default function AdminSettingsPage() {
     };
 
     const saveChannel = async () => {
-        const channel = normalizeChannel(await channelForm.validateFields());
+        const values = await channelForm.validateFields();
+        const channel = normalizeChannel(isWorkflowProtocol(values.protocol) ? { ...workflowChannelDraft, ...channelForm.getFieldsValue(true), ...values } : values);
+        if (channel.protocol === "runninghub" && (!channel.baseUrl.trim() || (!channel.apiKey.trim() && editingChannelIndex === null))) {
+            message.error("请填写 RunningHub Base URL 和积分 API Key");
+            return;
+        }
         rememberModels(channel.models);
         const nextChannels = [...channels];
         if (editingChannelIndex === null) nextChannels.push(channel);
@@ -284,12 +296,13 @@ export default function AdminSettingsPage() {
     const testModels = (testChannel?.models || []).filter((model) => `${model} ${modelLabel(model, testChannel)}`.toLowerCase().includes(testKeyword.trim().toLowerCase()));
 
     async function persistChannels(nextChannels: AdminModelChannel[]) {
-        if (!token) return;
+        if (!token) throw new Error("请先登录");
         const values = normalizeSettings(form.getFieldsValue(true) as AdminSettings);
         const nextChannelModels = collectChannelModels(nextChannels);
+        const nextChannelWorkflows = collectChannelWorkflows(nextChannels);
         const nextSettings = normalizeSettings({
             ...values,
-            public: { ...values.public, modelChannel: { ...values.public.modelChannel, availableModels: filterModels(values.public.modelChannel.availableModels, nextChannelModels) } },
+            public: { ...values.public, modelChannel: { ...values.public.modelChannel, availableModels: filterModels(values.public.modelChannel.availableModels, nextChannelModels), availableWorkflows: filterModels(values.public.modelChannel.availableWorkflows, nextChannelWorkflows.map((item) => item.value)) } },
             private: { ...values.private, channels: nextChannels },
         });
         const saved = normalizeSettings(await saveAdminSettings(token, nextSettings));
@@ -384,6 +397,9 @@ export default function AdminSettingsPage() {
                                         <Form.Item name={["public", "modelChannel", "availableModels"]} label="系统可用模型(请先在私有配置里配置渠道)" extra="可选项来自已启用渠道中选择的模型，最终开放哪些模型由这里勾选决定">
                                             <Select mode="multiple" showSearch={{ optionFilterProp: ["label", "value"] }} placeholder="请选择系统可用模型" options={channelModels.map((item) => ({ label: publicModelLabel(item), value: item }))} />
                                         </Form.Item>
+                                        <Form.Item name={["public", "modelChannel", "availableWorkflows"]} label="系统可用工作流" extra="先在私有渠道启用工作流，再在这里勾选对用户开放的工作流">
+                                            <Select mode="multiple" showSearch={{ optionFilterProp: ["label", "value"] }} placeholder="请选择系统可用工作流" options={channelWorkflows} />
+                                        </Form.Item>
                                     </Col>
                                     <Col xs={24} md={6}>
                                         <Form.Item name={["public", "modelChannel", "defaultModel"]} label="默认模型">
@@ -454,16 +470,27 @@ export default function AdminSettingsPage() {
                                         </Form.Item>
                                     </Col>
                                     <Col span={24}>
-                                        <Typography.Title level={5}>模型算力点</Typography.Title>
+                                        <Typography.Title level={5}>模型／工作流算力点</Typography.Title>
                                         <Table
                                             rowKey="model"
                                             pagination={false}
                                             size="small"
-                                            dataSource={publicModels.map((model) => ({ model, credits: modelCostCredits(modelCosts, model) }))}
+                                            dataSource={[
+                                                ...publicModels.map((model) => ({ model, label: publicModelLabel(model), credits: modelCostCredits(modelCosts, model) })),
+                                                ...channels.flatMap((channel) => isWorkflowProtocol(channel.protocol) ? (channel.workflows || []).filter((entry) => entry.enabled && publicWorkflows.includes(`workflow:system:${channel.id}:${entry.kind}:${entry.workflowId}`)).map((entry) => {
+                                                    const model = `workflow:system:${channel.id}:${entry.kind}:${entry.workflowId}`;
+                                                    return { model, label: `${channel.name} · ${entry.title || entry.workflowId}（工作流）`, credits: modelCostCredits(modelCosts, model) };
+                                                }) : []),
+                                            ]}
                                             columns={[
-                                                { title: "模型", dataIndex: "model", render: (value: string) => <span title={value}>{publicModelLabel(value)}</span> },
+                                                { title: "模型 / 工作流", dataIndex: "model", render: (_, item) => <span title={item.label}>{item.label}</span> },
                                                 {
-                                                    title: "计费单价（视频按秒）",
+                                                    title: (
+                                                        <span className="grid leading-tight">
+                                                            <span>计费单价</span>
+                                                            <span className="text-xs font-normal text-[var(--ant-color-text-secondary)]">视频模型按秒，工作流按次</span>
+                                                        </span>
+                                                    ),
                                                     dataIndex: "credits",
                                                     width: 220,
                                                     render: (_, item) => (
@@ -762,13 +789,13 @@ export default function AdminSettingsPage() {
                                     columns={[
                                         { title: "名称", dataIndex: "name", render: (value) => value || "未命名渠道" },
                                         { title: "协议", dataIndex: "protocol", width: 96, render: (value) => <Tag>{value || "openai"}</Tag> },
-                                        { title: "状态", dataIndex: "enabled", width: 96, render: (value) => <Tag color={value ? "success" : "default"}>{value ? "已启用" : "已停用"}</Tag> },
+                                        { title: "状态", dataIndex: "enabled", width: 120, render: (value, item) => isWorkflowProtocol(item.protocol) ? <Tag>{`启用 ${(item.workflows || []).filter((entry) => entry.enabled).length} / ${(item.workflows || []).length} 条`}</Tag> : <Tag color={value ? "success" : "default"}>{value ? "已启用" : "已停用"}</Tag> },
                                         {
                                             title: "模型",
                                             dataIndex: "models",
-                                            render: (value: string[]) => (
+                                            render: (value: string[], item) => (
                                                 <Typography.Text ellipsis style={{ maxWidth: 360 }}>
-                                                    {modelSummary(value || [])}
+                                                    {isWorkflowProtocol(item.protocol) ? (item.workflows || []).map((entry) => entry.title || entry.workflowId).join("、") || "未配置工作流" : modelSummary(value || [])}
                                                 </Typography.Text>
                                             ),
                                         },
@@ -780,9 +807,7 @@ export default function AdminSettingsPage() {
                                             width: 220,
                                             render: (_, item) => (
                                                 <Space size={4}>
-                                                    <Button size="small" onClick={() => openTestDialog(item._index)}>
-                                                        测试
-                                                    </Button>
+                                                    {!isWorkflowProtocol(item.protocol) ? <Button size="small" onClick={() => openTestDialog(item._index)}>测试</Button> : null}
                                                     <Button size="small" onClick={() => openChannelDrawer(item._index)}>
                                                         编辑
                                                     </Button>
@@ -820,7 +845,7 @@ export default function AdminSettingsPage() {
                 <Drawer
                     title={editingChannelIndex === null ? "新增渠道" : "编辑渠道"}
                     open={isChannelDrawerOpen}
-                    size={560}
+                    size={isWorkflowProtocol(channelProtocol) ? "75vw" : 560}
                     onClose={closeChannelDrawer}
                     extra={
                         <Space>
@@ -845,10 +870,12 @@ export default function AdminSettingsPage() {
                                         options={modelChannelProtocolOptions}
                                         onChange={(protocol: AdminModelChannel["protocol"]) => {
                                             channelForm.setFieldValue("baseUrl", modelChannelDefaultBaseUrls[protocol]);
+                                            setWorkflowChannelDraft((current) => ({ ...current, protocol, baseUrl: modelChannelDefaultBaseUrls[protocol] }));
                                         }}
                                     />
                                 </Form.Item>
                             </Col>
+                            {!isWorkflowProtocol(channelProtocol) ? <>
                             <Col span={12}>
                                 <Form.Item name="weight" label="权重">
                                     <InputNumber min={1} step={1} className="!w-full" />
@@ -899,6 +926,31 @@ export default function AdminSettingsPage() {
                                     </Space.Compact>
                                 </Form.Item>
                             </Col>
+                            </> : <Col span={24} className="mb-3">
+                                <WorkflowChannelPane
+                                    key={`${editingChannelIndex ?? "new"}:${workflowChannelDraft.id}:${workflowChannelDraft.protocol}`}
+                                    channel={workflowChannelDraft as WorkflowChannelSettings}
+                                    workflows={workflowChannelDraft.workflows || []}
+                                    token={token || ""}
+                                    admin={{ index: editingChannelIndex ?? undefined, channel: workflowChannelDraft }}
+                                    onChannelChange={(patch) => { channelForm.setFieldsValue(patch); setWorkflowChannelDraft((current) => ({ ...current, ...patch })); }}
+                                    onBridgeDeleted={(bridgeId) => {
+                                        const nextChannels = channels.map((channel) => channel.protocol === "comfyui" && channel.bridgeId === bridgeId ? { ...channel, bridgeId: "" } : channel);
+                                        setChannels(nextChannels);
+                                        form.setFieldValue(["private", "channels"], nextChannels);
+                                        channelForm.setFieldValue("bridgeId", "");
+                                        setWorkflowChannelDraft((current) => current.bridgeId === bridgeId ? { ...current, bridgeId: "" } : current);
+                                    }}
+                                    onWorkflowsChange={(workflows) => { channelForm.setFieldValue("workflows", workflows); setWorkflowChannelDraft((current) => ({ ...current, workflows })); }}
+                                    onBeforeTest={async () => {
+                                        const saved = editingChannelIndex === null ? undefined : channels[editingChannelIndex];
+                                        if (!saved?.id) throw new Error("请先保存渠道后再测试");
+                                        const draft = normalizeChannel({ ...workflowChannelDraft, ...channelForm.getFieldsValue(true) });
+                                        if (JSON.stringify(draft) !== JSON.stringify(normalizeChannel(saved))) throw new Error("当前配置有未保存修改，请先保存后再测试");
+                                        return saved.id;
+                                    }}
+                                />
+                            </Col>}
                             <Col span={24}>
                                 <Form.Item name="remark" label="备注">
                                     <Input.TextArea rows={3} />
@@ -1007,6 +1059,7 @@ function normalizePublicSetting(setting: Partial<AdminSettings["public"]> = {}):
             ...emptySettings.public.modelChannel,
             ...(setting.modelChannel || {}),
             availableModels: setting.modelChannel?.availableModels || [],
+            availableWorkflows: setting.modelChannel?.availableWorkflows || [],
             modelCosts: normalizeModelCosts(setting.modelChannel?.modelCosts || []),
             channels: setting.modelChannel?.channels || [],
             systemPrompts: {
@@ -1104,6 +1157,11 @@ function normalizeChannel(item: Partial<AdminModelChannel> = {}): AdminModelChan
         baseUrl: item.baseUrl || "",
         apiKey: item.apiKey || "",
         models: item.models || [],
+        uploadApiKey: item.uploadApiKey || "",
+        bridgeId: item.bridgeId || "",
+        comfyUrl: item.comfyUrl || "",
+        workflowDir: item.workflowDir || "",
+        workflows: item.workflows || [],
         weight: Math.max(1, Number(item.weight) || 1),
         timeout: Math.max(1, Number(item.timeout) || 600),
         enabled: item.enabled !== false,
@@ -1124,10 +1182,10 @@ function setModelCost(form: any, setModelCosts: (items: AdminModelCost[]) => voi
 }
 
 function mergeChannelApiKeys(currentChannels: AdminModelChannel[], saved: AdminSettings): AdminSettings {
-    const channels = saved.private.channels.map((item, index) => ({
-        ...item,
-        apiKey: currentChannels[index]?.apiKey || item.apiKey,
-    }));
+    const channels = saved.private.channels.map((item, index) => {
+        const source = isWorkflowProtocol(item.protocol) ? currentChannels.find((channel) => channel.id === item.id && channel.protocol === item.protocol) : currentChannels[index];
+        return { ...item, apiKey: source?.apiKey || item.apiKey, uploadApiKey: source?.uploadApiKey || item.uploadApiKey };
+    });
     return {
         public: saved.public,
         private: { ...saved.private, channels },
@@ -1135,7 +1193,11 @@ function mergeChannelApiKeys(currentChannels: AdminModelChannel[], saved: AdminS
 }
 
 function collectChannelModels(channels: AdminModelChannel[]) {
-    return uniqueModels(channels.filter((channel) => channel.enabled).flatMap((channel) => channel.models || []));
+    return uniqueModels(channels.filter((channel) => channel.enabled && !isWorkflowProtocol(channel.protocol)).flatMap((channel) => channel.models || []));
+}
+
+function collectChannelWorkflows(channels: AdminModelChannel[]) {
+    return channels.flatMap((channel) => isWorkflowProtocol(channel.protocol) ? (channel.workflows || []).filter((entry) => entry.enabled && entry.provider === channel.protocol).map((entry) => ({ label: `${channel.name} · ${entry.title || entry.workflowId}（工作流）`, value: `workflow:system:${channel.id}:${entry.kind}:${entry.workflowId}` })) : []);
 }
 
 function collectKnownModels(settings: AdminSettings) {
@@ -1199,6 +1261,7 @@ async function collectSettings(form: any, editorMode: Record<SettingsTabKey, Edi
         values.private = privateSetting;
     }
     values.public.modelChannel.availableModels = filterModels(values.public.modelChannel.availableModels, collectChannelModels(values.private.channels));
+    values.public.modelChannel.availableWorkflows = filterModels(values.public.modelChannel.availableWorkflows, collectChannelWorkflows(values.private.channels).map((item) => item.value));
     values.public.modelChannel.systemPrompt = values.public.modelChannel.systemPrompts.image || values.public.modelChannel.systemPrompts.text || "";
     return normalizeSettings(values);
 }

@@ -14,12 +14,12 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 let storageConfigPromise: Promise<StorageConfig> | null = null;
 
-export async function uploadMediaFile(input: string | Blob, prefix = "file", syncId?: string): Promise<UploadedFile> {
+export async function uploadMediaFile(input: string | Blob, prefix = "file", syncId?: string, tokenOverride?: string): Promise<UploadedFile> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const uploaded = await autoSyncToCloud(syncId || blob, async () => {
         const metadataUrl = blob.type.startsWith("video/") ? URL.createObjectURL(blob) : undefined;
         try {
-            return await uploadMediaBlobToServer(blob, input instanceof File ? input.name : prefix, metadataUrl);
+            return await uploadMediaBlobToServer(blob, input instanceof File ? input.name : prefix, metadataUrl, tokenOverride);
         } finally {
             if (metadataUrl) URL.revokeObjectURL(metadataUrl);
         }
@@ -65,11 +65,14 @@ export async function uploadRemoteMediaToServer(url: string, filename: string): 
     return uploadMediaBlobToServer(blob, filename);
 }
 
-async function uploadMediaBlobToServer(blob: Blob, filename: string, metadataUrl?: string): Promise<UploadedFile> {
+async function uploadMediaBlobToServer(blob: Blob, filename: string, metadataUrl?: string, tokenOverride?: string): Promise<UploadedFile> {
     const config = await loadStorageConfig().catch(() => null);
+    if (tokenOverride !== undefined && useUserStore.getState().token !== tokenOverride) {
+        throw new Error("登录状态已变化");
+    }
     const userProvider = config?.allowUserProvider ? loadUserStorageProvider() : null;
     if (!config || (!canUseGlobalStorage(config) && !userProvider)) throw new Error("服务端对象存储未启用");
-    const token = useUserStore.getState().token;
+    const token = tokenOverride === undefined ? useUserStore.getState().token : tokenOverride;
     if (userProvider?.type === "webdav") {
         const directUpload = await uploadWebDAVMediaDirect(blob, filename, userProvider);
         if (directUpload) return directUpload;

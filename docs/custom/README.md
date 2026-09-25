@@ -54,6 +54,12 @@ git diff --numstat upstream/main..custom
 | `handler/model_protocol.go` | `builtinAIProtocols` 追加 `fal` / `replicate` 适配器（含 `copyResponse` / `videoResponse` / `videoError` 三个钩子） | 46 行 |
 | `handler/video_task.go` | Fal/Replicate 参数错误透传，视频创建请求继承用户请求上下文 | 4 增 / 2 改 |
 | `service/model_protocol.go` | 2 个协议常量、`modelProtocolIDs` 加项、注册逻辑与 3 个新函数；`modelDiscoveryRules` 与 `modelConfigTestRules` 各补 `fal` / `replicate` 两条 | 61 增 / 8 改 |
+| `handler/settings.go`、`service/settings.go` | 管理渠道模型查询增加关键词参数；Fal / Replicate 走公开目录搜索，空查询保留常用清单 | 仅新增查询参数与分支 |
+| `web/src/app/(admin)/admin/settings/page.tsx`、`web/src/services/api/admin.ts` | 管理页把搜索关键词发送到渠道模型接口 | 仅新增查询参数 |
+| `web/src/components/channel-model-selector-modal.tsx` | Fal / Replicate 支持在线搜索，结果默认不勾选，用户确认后才加入渠道 | 仅增加搜索交互 |
+| `web/src/app/(user)/canvas/components/canvas-config-node-panel.tsx`、`canvas-node-prompt-panel.tsx` | 传入参考图状态并阻止不支持参考图的 Fal 文生视频请求；保留上游工作流选择回调 | 行内扩展 |
+| `web/src/components/model-picker.tsx`、`web/src/lib/video-model-capabilities.ts` | 图片参考存在时，从视频模型列表隐藏 Fal 文生视频模型 | 过滤条件与识别函数 |
+| `web/src/services/api/video.ts` | 创建 Fal 视频任务前拦截携带图片参考的文生视频请求 | 前置校验 |
 | `handler/model_protocol_direct_test.go`、`web/src/lib/model-channel.test.ts`、`web/src/services/api/protocols/direct-registry.test.ts` | 断言表追加用例（不改既有断言） | — |
 
 **除以上文件外，任何上游文件都不应出现自有改动。** 若发现必须新增挂载点，先在本文件登记，再动手。
