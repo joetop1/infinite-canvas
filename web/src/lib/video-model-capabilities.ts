@@ -11,7 +11,9 @@ export function isAgnesVideoV25Model(modelName: string) {
 }
 
 export function isFalTextToVideoModel(modelName: string, protocol: string) {
-    return protocol === "fal" && /\/text-to-video(?:\?|$)/i.test(modelName);
+    if (protocol !== "fal") return false;
+    const model = modelName.trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
+    return /\/text-to-video$/.test(model) || model === "fal-ai/veo3" || model === "fal-ai/veo3/fast";
 }
 
 export const COGVIDEOX3_DURATIONS = ["5", "10"] as const;

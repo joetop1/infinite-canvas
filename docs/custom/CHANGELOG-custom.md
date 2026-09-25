@@ -1,5 +1,12 @@
 # 改造台账
 
+## v0.8.0-custom.2 — Fal Veo 3 Fast 参考图拦截
+
+- Fal 的 `fal-ai/veo3/fast` 是文生视频端点；此前能力识别只匹配路径以 `/text-to-video` 结尾的模型 ID，因此连带参考图一起发送，触发上游 405。
+- 将 `fal-ai/veo3` 与 `fal-ai/veo3/fast` 纳入文生视频识别。画布已连接图片时，模型会从可选项隐藏；旧节点会被拦截并提示更换支持图片的模型，避免继续向该端点发起不兼容请求。
+- 请求中的 `fal-ai/veo3/fast`、6 个 `image_urls` 和 405 与该能力不匹配相符；服务端只返回了通用 405，无法仅凭该错误证明唯一根因。
+- 未运行构建或测试（遵循仓库 `AGENTS.md`）。
+
 记录本仓库相对上游 [tigerowo/infinite-canvas](https://github.com/tigerowo/infinite-canvas) 的全部改动。
 上游更新合并时，先看本文件即可知道"哪些是自有改动"。
 
