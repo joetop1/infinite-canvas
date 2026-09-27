@@ -16,6 +16,16 @@ export function isFalTextToVideoModel(modelName: string, protocol: string) {
     return /\/text-to-video$/.test(model) || model === "fal-ai/veo3" || model === "fal-ai/veo3/fast";
 }
 
+export function isFalKlingV21MasterModel(modelName: string, protocol: string) {
+    if (protocol.trim().toLowerCase() !== "fal") return false;
+    const model = modelName.trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
+    return model === "fal-ai/kling-video/v2.1/master/text-to-video" || model === "fal-ai/kling-video/v2.1/master/image-to-video";
+}
+
+export function normalizeFalKlingV21Duration(value: string) {
+    return String(value).trim() === "10" ? "10" : "5";
+}
+
 export const COGVIDEOX3_DURATIONS = ["5", "10"] as const;
 
 export function normalizeCogVideoX3Duration(value: string) {

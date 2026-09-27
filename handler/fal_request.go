@@ -74,6 +74,11 @@ func normalizeFalDirectBody(raw []byte, contentType string, modelName string, en
 	}
 
 	applyDirectModelParams(out, spec.Params)
+	if strings.EqualFold(spec.ModelPath, "fal-ai/kling-video/v2.1/master/text-to-video") {
+		if duration := readDirectString(out["duration"]); duration != "" && duration != "5" && duration != "10" {
+			return nil, errors.New("Fal Kling 2.1 Master 文生视频只支持 5 秒或 10 秒，请调整时长")
+		}
+	}
 	return json.Marshal(out)
 }
 
