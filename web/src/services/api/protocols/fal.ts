@@ -2,9 +2,8 @@ import { asRecord, firstHTTPURL, firstString, normalizeDirectStatus, readDirectE
 import type { DirectProtocolAdapter } from "./types";
 
 // Fal.ai 队列协议：POST {base}/{modelId} 提交，得到 request_id 与 response_url；
-// 取结果 GET {base}/{modelId}/requests/{requestId}/response：
+// 取结果 GET {base}/{owner}/{app}/requests/{requestId}（与官方 SDK 一致）：
 // 未完成返回 202（空体），完成后返回 200 + 模型输出本体（结构随模型而异）。
-// 因为我们提交时用的就是 `{base}/{modelId}`，推导出的结果地址与响应里的 response_url 一致。
 // 鉴权头是 `Authorization: Key <FAL_KEY>`，不是 Bearer，因此自定义 authorization。
 export const falDirectProtocol: DirectProtocolAdapter = {
     authorization: (apiKey) => (/^key\s/i.test(apiKey.trim()) ? apiKey.trim() : `Key ${apiKey.trim()}`),
@@ -15,7 +14,7 @@ export const falDirectProtocol: DirectProtocolAdapter = {
         const requestId = readString(taskId);
         const queuePath = falQueuePath(model);
         if (!requestId || !queuePath) throw new Error("Fal 任务缺少请求 ID 或模型 ID，无法查询结果");
-        return `${falBaseURL(baseUrl)}/${queuePath}/requests/${encodeURIComponent(requestId)}/response`;
+        return `${falBaseURL(baseUrl)}/${queuePath}/requests/${encodeURIComponent(requestId)}`;
     },
     readTaskId: (payload) => firstString(readPath(payload, "request_id"), readPath(payload, "id")),
     readCreatedVideoStatus: (payload) => normalizeFalStatus(readString(readPath(payload, "status"))),
@@ -57,8 +56,7 @@ export function falModelId(model?: string) {
 
 // fal 的队列按"应用"划分，多段模型 ID（如 fal-ai/kling-video/v2.1/master/text-to-video）
 // 只有前两段是应用名，其余是应用内端点；用完整模型路径请求队列接口会得到 405。
-// 实测对照：.../fal-ai/flux/requests/{id}/response → 404 NOT_FOUND（路由存在），
-// .../fal-ai/flux/dev/requests/{id}/response → 405（多了一段，路由不存在）。
+// 结果地址不带 /response；该后缀会触发 405。
 export function falQueuePath(model?: string) {
     const segments = falModelId(model).split("/").filter(Boolean);
     return segments.length < 2 ? "" : `${segments[0]}/${segments[1]}`;

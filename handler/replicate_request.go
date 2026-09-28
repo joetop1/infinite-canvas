@@ -58,7 +58,14 @@ func normalizeReplicateDirectBody(raw []byte, contentType string, modelName stri
 		if len(images) == 0 {
 			images = readDirectReferences(body, "first_frame_url")
 		}
-		applyDirectMediaField(input, spec, images, "image", "image_input", directImageFieldKey, directImagePluralKey)
+		if strings.EqualFold(target, "wan-video/wan-2.5-i2v") {
+			if len(images) != 1 || len(readDirectReferences(body, "last_frame_url")) > 0 || len(readDirectReferences(body, "input_reference[]")) > 0 && len(readDirectReferences(body, "first_frame_url")) > 0 {
+				return nil, errors.New("Replicate Wan 2.5 图生视频只支持一张起始图片，请保留一张参考图或首帧，移除其余图片和尾帧后再生成")
+			}
+			input["image"] = images[0]
+		} else {
+			applyDirectMediaField(input, spec, images, "image", "image_input", directImageFieldKey, directImagePluralKey)
+		}
 		videos := readDirectReferences(body, "video_reference[]")
 		applyDirectMediaField(input, spec, videos, "video", "video_input", directVideoFieldKey, directVideoPluralKey)
 		if len(readDirectReferences(body, "audio_reference[]")) > 0 {

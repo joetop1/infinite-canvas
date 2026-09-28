@@ -16,7 +16,7 @@ import (
 // 账号渠道（登录后）下，画布的图片请求打到画布后端，上游回的是"已入队"。
 // 这组测试用脚本化的上游，验证后端会替用户把队列跑完并给出 OpenAI 形态的响应。
 func TestFalQueueImageProxyFlow(t *testing.T) {
-	const submit = `{"request_id":"req-1","status_url":"https://upstream.invalid/fal-ai/flux/requests/req-1/status","response_url":"https://upstream.invalid/fal-ai/flux/requests/req-1/response","queue_position":0}`
+	const submit = `{"request_id":"req-1","status_url":"https://upstream.invalid/fal-ai/flux/requests/req-1/status","response_url":"https://upstream.invalid/fal-ai/flux/requests/req-1","queue_position":0}`
 	channel := model.ModelChannel{Protocol: "fal", BaseURL: "https://upstream.invalid"}
 
 	tests := []struct {
@@ -30,7 +30,7 @@ func TestFalQueueImageProxyFlow(t *testing.T) {
 			name: "completed returns openai images response",
 			steps: []protocolStep{
 				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/status", 200, `{"status":"COMPLETED"}`},
-				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/response", 200, `{"images":[{"url":"https://media.invalid/a.png","width":1024}],"seed":42}`},
+				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1", 200, `{"images":[{"url":"https://media.invalid/a.png","width":1024}],"seed":42}`},
 			},
 			want: `{"data":[{"url":"https://media.invalid/a.png"}]}`,
 		},
@@ -41,7 +41,7 @@ func TestFalQueueImageProxyFlow(t *testing.T) {
 			submit: `{"request_id":"req-1","queue_position":0}`,
 			steps: []protocolStep{
 				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/status", 200, `{"status":"COMPLETED"}`},
-				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/response", 200, `{"images":[{"url":"https://media.invalid/a.png"}]}`},
+				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1", 200, `{"images":[{"url":"https://media.invalid/a.png"}]}`},
 			},
 			want: `{"data":[{"url":"https://media.invalid/a.png"}]}`,
 		},
@@ -56,7 +56,7 @@ func TestFalQueueImageProxyFlow(t *testing.T) {
 			name: "completed without image is explicit",
 			steps: []protocolStep{
 				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/status", 200, `{"status":"COMPLETED"}`},
-				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/response", 200, `{"prompt":"scene"}`},
+				{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1", 200, `{"prompt":"scene"}`},
 			},
 			wantErr: "Fal 任务已完成但没有返回图片地址",
 		},
@@ -93,7 +93,7 @@ func TestFalQueueImageProxyFlow(t *testing.T) {
 func TestFalQueueIgnoresForeignHostURLs(t *testing.T) {
 	protocolScript(t, []protocolStep{
 		{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/status", 200, `{"status":"COMPLETED"}`},
-		{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1/response", 200, `{"images":[{"url":"https://media.invalid/a.png"}]}`},
+		{"GET", "https://upstream.invalid/fal-ai/flux/requests/req-1", 200, `{"images":[{"url":"https://media.invalid/a.png"}]}`},
 	})
 	channel := model.ModelChannel{Protocol: "fal", BaseURL: "https://upstream.invalid"}
 	if got := sameHostQueueURL("http://upstream.invalid/fal-ai/flux/requests/req-1/status", channel); got != "" {
@@ -125,7 +125,7 @@ func TestFalVideoProxyFlow(t *testing.T) {
 	statusRequest := httptest.NewRequest(http.MethodGet, "https://upstream.invalid/fal-ai/kling-video/requests/req-9/status", nil)
 
 	protocolScript(t, []protocolStep{
-		{"GET", "https://upstream.invalid/fal-ai/kling-video/requests/req-9/response", 200, `{"video":{"url":"https://media.invalid/v.mp4"}}`},
+		{"GET", "https://upstream.invalid/fal-ai/kling-video/requests/req-9", 200, `{"video":{"url":"https://media.invalid/v.mp4"}}`},
 	})
 	completed := transformAIProtocolVideoPayload([]byte(`{"status":"COMPLETED"}`), statusRequest, channel, model_, true)
 	assertProtocolJSONValue(t, protocolJSON(t, string(completed)), `{"status":"completed","progress":100,"video_url":"https://media.invalid/v.mp4","url":"https://media.invalid/v.mp4"}`)

@@ -134,7 +134,11 @@ func falQueueActionURL(channel model.ModelChannel, modelName string, requestID s
 	if queue == "" || strings.TrimSpace(requestID) == "" {
 		return ""
 	}
-	return service.BuildModelChannelURL(channel, "/"+queue+"/requests/"+url.PathEscape(requestID)+"/"+action)
+	path := "/" + queue + "/requests/" + url.PathEscape(requestID)
+	if action != "response" {
+		path += "/" + action
+	}
+	return service.BuildModelChannelURL(channel, path)
 }
 
 // falUpstreamPath 用模型路径作为提交地址：POST {base}/{modelId}；
@@ -298,7 +302,7 @@ func transformFalVideoStatusResponse(payload []byte, request *http.Request, chan
 		if message := readFalQueueError(root); message != "" {
 			return marshalDirectMap(map[string]any{"status": "failed", "error": message})
 		}
-		videoURL, message := fetchFalVideoURL(request, channel)
+		videoURL, message := fetchFalVideoURL(request, channel, root)
 		if message != "" {
 			return marshalDirectMap(map[string]any{"status": "failed", "error": message})
 		}
@@ -311,15 +315,18 @@ func transformFalVideoStatusResponse(payload []byte, request *http.Request, chan
 }
 
 // fetchFalVideoURL 状态端点只说"完成了"，产物要去结果端点取。
-func fetchFalVideoURL(request *http.Request, channel model.ModelChannel) (string, string) {
+func fetchFalVideoURL(request *http.Request, channel model.ModelChannel, root map[string]any) (string, string) {
 	if request == nil || request.URL == nil {
 		return "", "Fal 任务缺少查询地址"
 	}
-	statusTarget := request.URL.String()
+	statusURL := *request.URL
+	statusURL.RawQuery = ""
+	statusTarget := statusURL.String()
 	if !strings.HasSuffix(statusTarget, "/status") {
 		return "", "Fal 任务查询地址异常，无法获取生成结果"
 	}
-	payload, status, err := directQueueGET(request, channel, strings.TrimSuffix(statusTarget, "/status")+"/response")
+	target := firstNonEmpty(sameHostQueueURL(readDirectStringField(root, "response_url"), channel), strings.TrimSuffix(statusTarget, "/status"))
+	payload, status, err := directQueueGET(request, channel, target)
 	if err != nil {
 		return "", err.Error()
 	}

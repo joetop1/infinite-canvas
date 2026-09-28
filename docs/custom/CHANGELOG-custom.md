@@ -1,5 +1,13 @@
 # 改造台账
 
+## v0.8.0-custom.4 — 按线上日志修复视频协议
+
+- 最新 Veo 的 Content-Type 错误实际来自 OpenRouter（openai 协议、openrouter.ai/api/v1），请求日志为 multipart。新增按渠道域名限定的视频 JSON 转译，本地未登录直连也使用相同字段约定；保留其他 OpenAI 渠道的原有格式。
+- Fal 提交已返回 processing，失败发生于取结果。官方 JavaScript SDK 的结果地址是 `/requests/{id}`；只读不存在任务对照：该路径返回 404，额外添加 `/response` 返回 405。修复前后端结果路径，后端优先使用状态响应里的同源 response_url。此前把参考图/时长参数错误直接归因于 405 的说法证据不足，在此更正。
+- Replicate Wan 2.5 图生视频的线上 422 明确为缺少 image，原请求把六图放进 image_input。前后端拒绝零图、多图及多余首尾帧，单图映射至 image；不静默丢弃其余图片。
+- 后端 handler、service 测试通过；前端 17 项协议测试通过。全量 TypeScript 检查仍有未改动的 model-picker.tsx 四处类型错误。未发起付费生成，线上部署与真实生成仍待确认。
+- VERSION 改为完整自定义版本，避免页面只显示 v0.8.0 无法分辨部署。
+
 ## v0.8.0-custom.3 — 限制 Fal Kling 2.1 Master 时长
 
 - 画布视频工作台与节点视频设置对 Fal `fal-ai/kling-video/v2.1/master` 显示 5 秒、10 秒可选项，并在构造请求时规范时长；后端再次拦截不支持的时长，避免把 4 秒等无效值发送给上游。

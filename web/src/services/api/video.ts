@@ -1,4 +1,5 @@
 import axios from "axios";
+import { isOpenRouterBaseURL, openRouterVideoBody } from "./protocols/openrouter-video";
 
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { isMiniMaxH3Config, normalizeMiniMaxH3Duration, normalizeMiniMaxH3Ratio, normalizeMiniMaxH3Resolution } from "@/lib/minimax-video";
@@ -113,6 +114,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (isFalTextToVideoModel(model, videoChannelProtocol(config, model)) && input.references.length + Number(Boolean(input.firstFrame || input.lastFrame)) > 0) {
         throw new VideoRequestError("当前选择的是文生视频模型，不能接收参考图。请改选图生视频或参考图生视频模型后再生成。");
     }
+    if (videoChannelProtocol(config, model) === "replicate" && model.split(/[?#:]/)[0].toLowerCase() === "wan-video/wan-2.5-i2v" && (input.references.length + Number(Boolean(input.firstFrame)) !== 1 || input.lastFrame)) {
+        throw new VideoRequestError("Replicate Wan 2.5 图生视频只支持一张起始图片，请保留一张参考图或首帧，移除其余图片和尾帧后再生成");
+    }
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, input);
     const startedAt = Date.now();
@@ -127,7 +131,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             : !accountProxy && isMiniMaxH3Config(config, model)
                 ? miniMaxApiUrl(config, "/v2/video_generation")
                 : aiApiUrl(config, !accountProxy && (isGrok2APIVideoConfig(config, model) || isCogVideoX3Model(model)) ? "/videos/generations" : "/videos");
-        const requestBody = !accountProxy && isGeminiConfig(config, model) ? withoutVideoModel(body) : body;
+        const requestBody = !accountProxy && body instanceof FormData && videoChannelProtocol(config, model) === "openai" && isOpenRouterBaseURL(channel?.baseUrl || config.baseUrl)
+            ? await openRouterVideoBody(body)
+            : !accountProxy && isGeminiConfig(config, model) ? withoutVideoModel(body) : body;
         const created = directProvider
             ? await (await import("@/services/api/direct-ai")).createDirectVideoTask(config, directProvider, body)
             : unwrapVideoResponseForConfig(config, model, (await axios.post<ApiVideoResponse>(createUrl, requestBody, { headers })).data);

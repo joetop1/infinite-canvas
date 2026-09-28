@@ -46,6 +46,7 @@ type aiProtocolAdapter struct {
 // HTTP 混合钩子留在原 handler 包边界，避免 service 反向依赖 handler。
 // 表只初始化一次；每阶段只执行自身钩子，bool 表示停止匹配，不表示字段是否改变。
 var builtinAIProtocols = []aiProtocolAdapter{
+	{id: "openrouter-video", prepare: prepareOpenRouterVideoRequest},
 	{
 		id: service.ModelChannelProtocolAutoDL,
 		path: func(channel model.ModelChannel, modelName string, path string) (string, bool) {
@@ -60,7 +61,7 @@ var builtinAIProtocols = []aiProtocolAdapter{
 			}
 			return path, true
 		},
-		prepare: prepareAutoDLRequest,
+		prepare:      prepareAutoDLRequest,
 		copyResponse: copyAutoDLResponse,
 		videoResponse: func(payload []byte, _ *http.Request, channel model.ModelChannel, _ string, _ bool) ([]byte, bool) {
 			if !service.IsAutoDLChannel(channel) {

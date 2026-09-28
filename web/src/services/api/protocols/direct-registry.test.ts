@@ -164,8 +164,8 @@ test("Fal uses Key auth, polls the queue result endpoint and never treats tracki
     assert.equal(protocol.authorization?.("Key abcd"), "Key abcd");
     assert.equal(protocol.authorization?.("key abcd"), "key abcd");
     // 队列路径只取前两段：fal-ai/flux/dev 的队列是 fal-ai/flux（详见 falQueuePath 的说明）。
-    assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/1", "fal-ai/flux/dev"), "https://queue.fal.run/fal-ai/flux/requests/req%2F1/response");
-    assert.equal(protocol.pollURL?.("https://queue.fal.run", "req", "fal-ai/flux/dev?image_size=square_hd"), "https://queue.fal.run/fal-ai/flux/requests/req/response");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/1", "fal-ai/flux/dev"), "https://queue.fal.run/fal-ai/flux/requests/req%2F1");
+    assert.equal(protocol.pollURL?.("https://queue.fal.run", "req", "fal-ai/flux/dev?image_size=square_hd"), "https://queue.fal.run/fal-ai/flux/requests/req");
     assert.throws(() => protocol.pollURL?.("https://queue.fal.run/", "req", ""), /模型/);
     assert.throws(() => protocol.pollURL?.("https://queue.fal.run", "req"), /模型/);
     assert.throws(() => protocol.pollPath("req"), /模型/);
@@ -174,7 +174,7 @@ test("Fal uses Key auth, polls the queue result endpoint and never treats tracki
     assert.deepEqual(protocol.readCreatedImageURLs?.({
         request_id: "req",
         status_url: "https://queue.fal.run/fal-ai/flux/dev/requests/req/status",
-        response_url: "https://queue.fal.run/fal-ai/flux/dev/requests/req/response",
+        response_url: "https://queue.fal.run/fal-ai/flux/dev/requests/req",
     }), []);
     assert.equal(protocol.readCreatedVideoStatus({ status: "IN_QUEUE" }), "processing");
     assert.equal(protocol.readCreatedVideoStatus({ status: "COMPLETED" }), "completed");
@@ -252,7 +252,7 @@ test("Fal polling uses the queue path (owner/app) instead of the full model path
     assert.equal(falQueuePath("fal-ai/flux/dev?image_size=landscape_16_9"), "fal-ai/flux");
     assert.equal(falQueuePath("justaname"), "");
     assert.equal(protocol.pollURL?.("https://queue.fal.run/", "req/a b?", "fal-ai/flux/dev"),
-        "https://queue.fal.run/fal-ai/flux/requests/req%2Fa%20b%3F/response");
+        "https://queue.fal.run/fal-ai/flux/requests/req%2Fa%20b%3F");
     assert.equal(protocol.pollURL?.("https://queue.fal.run", "req-1", "fal-ai/kling-video/v2.1/master/text-to-video"),
-        "https://queue.fal.run/fal-ai/kling-video/requests/req-1/response");
+        "https://queue.fal.run/fal-ai/kling-video/requests/req-1");
 });
