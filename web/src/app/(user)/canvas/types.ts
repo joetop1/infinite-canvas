@@ -94,6 +94,7 @@ export type CanvasNodeMetadata = {
     audioTaskId?: string;
     audioTaskResultId?: string;
     videoTaskId?: string;
+    videoTaskPhase?: string;
     videoTaskVideoId?: string;
     firstFrameNodeId?: string;
     lastFrameNodeId?: string;

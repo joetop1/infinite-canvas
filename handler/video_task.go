@@ -2,9 +2,13 @@ package handler
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
@@ -94,100 +98,86 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 		Fail(w, "AI 接口请求失败")
 		return
 	}
-	// [CUSTOM] 保留客户端取消信号，避免断开后仍发起上游生成。
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
-	if err != nil {
-		log.Printf("AI video build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, upstreamPath), err)
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	service.SetModelChannelAuthHeader(request, channel)
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
-	}
+	requestURL := service.BuildModelChannelURL(channel, upstreamPath)
 	logContext := aiLogContext{
-		StartedAt:       startedAt,
-		Endpoint:        "/videos",
-		Method:          http.MethodPost,
-		Model:           modelName,
-		Channel:         channel,
-		UserID:          user.ID,
-		UserDisplayName: firstNonEmpty(user.DisplayName, user.Username),
-		Credits:         credits,
-		RequestBody:     summarizeAIRequest(body, contentType),
+		StartedAt: startedAt, Endpoint: "/videos", Method: http.MethodPost, Model: modelName,
+		Channel: channel, UserID: user.ID, UserDisplayName: firstNonEmpty(user.DisplayName, user.Username),
+		Credits: credits, RequestBody: summarizeAIRequest(body, contentType),
 	}
-	if credits > 0 {
-		if err := service.ConsumeUserCredits(user.ID, modelName, credits, upstreamPath); err != nil {
-			FailError(w, err)
-			return
+	fingerprintInput := append([]byte(modelName+"\x00"+channel.ID+"\x00"+userChannelID+"\x00"+readVideoTaskSource(r)+"\x00"+readVideoTaskSourceID(r)+"\x00"), body...)
+	fingerprint := sha256.Sum256(fingerprintInput)
+	clientTaskID := readClientVideoTaskID(r)
+	if clientTaskID == "" {
+		clientTaskID = "client_video_task_" + uuid.NewString()
+	}
+	seconds, size := readVideoRequestOptions(body, contentType)
+	task, created, err := service.SubmitVideoGeneration(r.Context(), service.VideoGenerationInput{
+		UserID: user.ID, UserDisplayName: firstNonEmpty(user.DisplayName, user.Username), Model: modelName,
+		ChannelID: channel.ID, UserChannelID: userChannelID, ChannelName: channel.Name,
+		Source: readVideoTaskSource(r), SourceID: readVideoTaskSourceID(r), ClientTaskID: clientTaskID,
+		Fingerprint: hex.EncodeToString(fingerprint[:]), Seconds: seconds, Size: size,
+		RequestBody: logContext.RequestBody, BillingPath: upstreamPath, Credits: credits,
+	}, func(ctx context.Context) (service.VideoSubmission, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
+		if err != nil {
+			return service.VideoSubmission{}, err
 		}
-	}
-	payload, status, err := doAIRequest(request, channel)
-	if err != nil {
-		if credits > 0 {
-			refundVideoCredits(user.ID, modelName, credits, upstreamPath)
+		service.SetModelChannelAuthHeader(request, channel)
+		if contentType != "" {
+			request.Header.Set("Content-Type", contentType)
 		}
-		saveAIProxyLog(logContext, 0, "", err.Error())
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	if status >= http.StatusBadRequest {
-		message := readUpstreamAIErrorMessage(payload, status)
-		if credits > 0 {
-			refundVideoCredits(user.ID, modelName, credits, upstreamPath)
+		payload, status, err := doAIRequest(request, channel)
+		if err != nil {
+			saveAIProxyLog(logContext, 0, "", err.Error())
+			return service.VideoSubmission{}, err
 		}
-		saveAIProxyLog(logContext, status, string(payload), strings.TrimSpace(string(payload)))
-		Fail(w, message)
-		return
-	}
-	transformed := transformVideoCreatePayload(payload, request, channel, modelName)
-	if message := readVideoCreateErrorMessage(payload, transformed, channel, modelName); message != "" {
-		if credits > 0 {
-			refundVideoCredits(user.ID, modelName, credits, upstreamPath)
+		if status >= http.StatusInternalServerError {
+			saveAIProxyLog(logContext, status, string(payload), "上游服务端错误，提交结果不确定")
+			return service.VideoSubmission{}, fmt.Errorf("上游返回 HTTP %d，提交结果不确定", status)
 		}
-		saveAIProxyLog(logContext, status, string(payload), message)
-		Fail(w, message)
-		return
-	}
-	parsed := parseVideoTaskPayload(transformed, modelName)
-	if parsed.UpstreamTaskID == "" && parsed.UpstreamVideoID == "" {
-		if credits > 0 {
-			refundVideoCredits(user.ID, modelName, credits, upstreamPath)
+		if status >= http.StatusBadRequest {
+			message := readUpstreamAIErrorMessage(payload, status)
+			saveAIProxyLog(logContext, status, string(payload), strings.TrimSpace(string(payload)))
+			return service.VideoSubmission{Rejected: true, Error: message, ErrorDetail: string(payload), ResponseBody: string(payload)}, nil
 		}
-		saveAIProxyLog(logContext, status, string(transformed), "视频接口没有返回任务 ID")
-		Fail(w, "视频接口没有返回任务 ID")
-		return
-	}
-	task, err := service.CreateVideoTask(service.VideoTaskCreateInput{
-		UserID:          user.ID,
-		UserDisplayName: firstNonEmpty(user.DisplayName, user.Username),
-		Model:           modelName,
-		ChannelID:       channel.ID,
-		UserChannelID:   userChannelID,
-		ChannelName:     channel.Name,
-		Source:          readVideoTaskSource(r),
-		SourceID:        readVideoTaskSourceID(r),
-		ClientTaskID:     readClientVideoTaskID(r),
-		UpstreamTaskID:  parsed.UpstreamTaskID,
-		UpstreamVideoID: parsed.UpstreamVideoID,
-		Status:          parsed.Status,
-		Progress:        parsed.Progress,
-		Seconds:         parsed.Seconds,
-		Size:            parsed.Size,
-		VideoURL:        parsed.VideoURL,
-		Error:           parsed.Error,
-		ErrorDetail:     parsed.ErrorDetail,
-		RequestBody:     logContext.RequestBody,
-		ResponseBody:    string(transformed),
-		Credits:         credits,
+		transformed := transformVideoCreatePayload(payload, request, channel, modelName)
+		if message := readVideoCreateErrorMessage(payload, transformed, channel, modelName); message != "" {
+			saveAIProxyLog(logContext, status, string(transformed), message)
+			return service.VideoSubmission{Rejected: true, Error: message, ErrorDetail: string(payload), ResponseBody: string(transformed)}, nil
+		}
+		parsed := parseVideoTaskPayload(transformed, modelName)
+		saveAIProxyLog(logContext, status, string(transformed), "")
+		return service.VideoSubmission{
+			Accepted: true, UpstreamTaskID: parsed.UpstreamTaskID, UpstreamVideoID: parsed.UpstreamVideoID,
+			Status: parsed.Status, Progress: parsed.Progress, Seconds: parsed.Seconds, Size: parsed.Size,
+			VideoURL: parsed.VideoURL, Error: parsed.Error, ErrorDetail: parsed.ErrorDetail, ResponseBody: string(transformed),
+		}, nil
 	})
 	if err != nil {
-		log.Printf("save video task failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
+		log.Printf("submit video task failed: model=%s err=%v", modelName, err)
+		if errors.Is(err, service.ErrVideoTaskKeyConflict) || strings.Contains(err.Error(), "算力点不足") {
+			Fail(w, err.Error())
+		} else {
+			Fail(w, "AI 接口请求失败")
+		}
 		return
 	}
-	saveAIProxyLog(logContext, status, string(transformed), "")
+	if !created {
+		log.Printf("video task idempotent replay task=%s user=%s", task.ID, user.ID)
+	}
 	OK(w, service.VideoTaskResponse(task))
+	return
+
+}
+
+func readVideoRequestOptions(body []byte, contentType string) (string, string) {
+	payload, err := decodeDirectRequestBody(body, contentType, "视频")
+	if err != nil {
+		return "", ""
+	}
+	seconds := firstNonEmpty(readStringPath(payload, "seconds"), readStringPath(payload, "duration"))
+	size := firstNonEmpty(readStringPath(payload, "size"), readStringPath(payload, "resolution"))
+	return seconds, size
 }
 
 func readClientVideoTaskID(r *http.Request) string {
@@ -319,8 +309,8 @@ func pollVideoTaskFromUpstream(task model.VideoTask) (service.VideoTaskPollUpdat
 	}
 	if status >= http.StatusBadRequest {
 		message := readUpstreamAIErrorMessage(payload, status)
-		if status == http.StatusTooManyRequests {
-			return service.VideoTaskPollUpdate{Status: task.Status, ErrorDetail: message, ResponseBody: string(payload)}, nil
+		if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
+			return service.VideoTaskPollUpdate{Status: task.Status, ErrorDetail: message, ResponseBody: string(payload), Retryable: true}, nil
 		}
 		saveAIProxyLog(logContext, status, string(payload), strings.TrimSpace(string(payload)))
 		return service.VideoTaskPollUpdate{Status: "failed", Error: message, ErrorDetail: message, ResponseBody: string(payload)}, nil
@@ -354,6 +344,7 @@ func pollVideoTaskFromUpstream(task model.VideoTask) (service.VideoTaskPollUpdat
 		Error:        parsed.Error,
 		ErrorDetail:  parsed.ErrorDetail,
 		ResponseBody: string(transformed),
+		Phase:        parsed.Phase,
 	}, nil
 }
 
@@ -432,6 +423,7 @@ type parsedVideoTaskPayload struct {
 	VideoURL        string
 	Error           string
 	ErrorDetail     string
+	Phase           string
 }
 
 func parseVideoTaskPayload(payload []byte, modelName string) parsedVideoTaskPayload {
@@ -449,7 +441,8 @@ func parseVideoTaskPayload(payload []byte, modelName string) parsedVideoTaskPayl
 		Size:            firstNonEmpty(readStringPath(data, "size"), readSizeFromDimensions(data)),
 		VideoURL:        firstNonEmpty(readStringPath(data, "video_url"), readStringPath(data, "url"), readStringPath(data, "video.url"), readStringPath(data, "remixed_from_video_id"), readStringPath(data, "output_url"), readStringPath(data, "download_url"), readStringPath(data, "content.video_url"), findFirstHTTPURL(data)),
 		Error:           firstNonEmpty(readStringPath(data, "error.message"), readStringPath(data, "error")),
-		ErrorDetail:     "",
+		ErrorDetail:     firstNonEmpty(readStringPath(data, "error_detail"), readStringPath(data, "errorDetail")),
+		Phase:           firstNonEmpty(readStringPath(data, "phase")),
 	}
 	if result.UpstreamTaskID == result.UpstreamVideoID && strings.HasPrefix(result.UpstreamVideoID, "video_") {
 		result.UpstreamTaskID = ""

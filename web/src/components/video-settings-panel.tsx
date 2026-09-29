@@ -8,7 +8,7 @@ import { useAutoDLWorkflow } from "@/hooks/use-autodl-workflow";
 import { isAutoDLConfig, normalizeAutoDLDuration } from "@/lib/autodl";
 import { boolConfig, isSeedanceFastOrMiniModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { COGVIDEOX3_DURATIONS, isCogVideoX3Model, isFalKlingV21MasterModel, modelKey, normalizeCogVideoX3Duration, normalizeFalKlingV21Duration, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
+import { COGVIDEOX3_DURATIONS, isCogVideoX3Model, isFalKlingV21MasterModel, modelKey, normalizeCogVideoX3Duration, normalizeFalKlingV21Duration, supportsVideoAudioGeneration, videoModelProfile } from "@/lib/video-model-capabilities";
 import { grokVideoModeOptions, isAPIMartKlingV26Config, isAPIMartKlingV3Config, isKIEGrokVideoModel, isKIEKlingV3Config, klingV26DurationOptions, klingV26ModeOptions, klingV26RatioLabels, klingV26RatioOptions, klingV3DurationOptions, klingV3ModeOptions, normalizeKlingV26Duration, normalizeKlingV26Ratio, normalizeKlingV3Duration } from "@/services/api/protocols/kling-models";
 import { channelProtocolForConfig, type AiConfig } from "@/stores/use-config-store";
 
@@ -59,11 +59,12 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
     const grokMode = config.videoMode === "fun" || config.videoMode === "spicy" ? config.videoMode : "normal";
     const cogVideoX3 = isCogVideoX3Model(model);
     const falKlingV21 = isFalKlingV21MasterModel(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
+    const profile = videoModelProfile(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
     const seconds = autodl ? config.videoSeconds ?? "" : cogVideoX3 ? normalizeCogVideoX3Duration(config.videoSeconds) : falKlingV21 ? normalizeFalKlingV21Duration(config.videoSeconds) : config.videoSeconds || "6";
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
     const resolution = normalizeVideoResolutionValue(config.vquality);
-    const audioGenerationEnabled = supportsVideoAudioGeneration(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
+    const audioGenerationEnabled = profile?.supportsAudio ?? supportsVideoAudioGeneration(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
     const generateAudio = boolConfig(config.videoGenerateAudio, false);
     const updateResolution = (value: string) => {
         const nextResolution = normalizeVideoResolutionValue(value);
@@ -103,12 +104,12 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
                 ) : null}
                 <SettingGroup title="清晰度" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {resolutionButtonOptions.map((item) => (
+                        {(profile ? videoResolutionOptions.filter((item) => profile.resolutions.includes(item.value)) : resolutionButtonOptions).map((item) => (
                             <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => updateResolution(item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
-                        <ResolutionInput value={resolution} theme={theme} onChange={updateResolution} />
+                        {profile ? null : <ResolutionInput value={resolution} theme={theme} onChange={updateResolution} />}
                     </div>
                 </SettingGroup>
                 <SettingGroup title="尺寸" color={theme.node.muted}>
@@ -158,12 +159,12 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
                     <>
                         <SettingGroup title="秒数" color={theme.node.muted}>
                             <div className="grid grid-cols-3 gap-2.5">
-                                {(cogVideoX3 ? COGVIDEOX3_DURATIONS : falKlingV21 ? [5, 10] : secondOptions).map((value) => (
+                                {(profile?.durationOptions ? profile.durationOptions.map(Number) : cogVideoX3 ? COGVIDEOX3_DURATIONS : falKlingV21 ? [5, 10] : secondOptions).map((value) => (
                                     <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                         {value}s
                                     </OptionPill>
                                 ))}
-                                {cogVideoX3 || falKlingV21 ? null : <NumberInput value={seconds} min={1} max={30} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} onBlur={autodl ? (value) => onConfigChange("videoSeconds", normalizeAutoDLDuration(value, workflow)) : undefined} />}
+                                {profile?.durationOptions || cogVideoX3 || falKlingV21 ? null : <NumberInput value={seconds} min={profile?.minSeconds ?? 1} max={profile?.maxSeconds ?? 30} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} onBlur={autodl ? (value) => onConfigChange("videoSeconds", normalizeAutoDLDuration(value, workflow)) : undefined} />}
                             </div>
                         </SettingGroup>
                         {audioGenerationEnabled ? <AudioGenerationSetting checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
@@ -257,12 +258,13 @@ function SeedanceVideoSettingsPanel({ config, modelName, onConfigChange, theme, 
     const model = modelName || config.model || config.videoModel;
     const modelId = modelKey(model);
     const seedance20 = (modelId.includes("seedance-2-0") || modelId === "bytedance-seedance-2") && !isSeedanceFastOrMiniModel(model);
+    const profile = videoModelProfile(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
     const resolution = seedance20 ? normalizeVideoResolutionValue(config.vquality) : normalizeSeedanceResolution(config.vquality, model);
     const ratio = normalizeSeedanceRatio(config.size);
     const maxSeconds = modelId.includes("seedance-2-5") ? 30 : 15;
     const duration = normalizeSeedanceDuration(config.videoSeconds, maxSeconds);
     const watermark = boolConfig(config.videoWatermark, false);
-    const audioGenerationEnabled = supportsVideoAudioGeneration(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
+    const audioGenerationEnabled = profile?.supportsAudio ?? supportsVideoAudioGeneration(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
     const generateAudio = boolConfig(config.videoGenerateAudio, false);
 
     return (
@@ -271,7 +273,7 @@ function SeedanceVideoSettingsPanel({ config, modelName, onConfigChange, theme, 
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
                 <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {(seedance20 ? resolutionButtonOptions : seedanceResolutionOptions).map((item) => {
+                        {(profile ? seedanceResolutionOptions.filter((item) => profile.resolutions.includes(item.value.replace("p", ""))) : seedance20 ? resolutionButtonOptions : seedanceResolutionOptions).map((item) => {
                             const disabled = item.value === "1080p" && isSeedanceFastOrMiniModel(model);
                             return (
                                 <OptionPill key={item.value} selected={resolution === item.value} disabled={disabled} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
@@ -279,7 +281,7 @@ function SeedanceVideoSettingsPanel({ config, modelName, onConfigChange, theme, 
                                 </OptionPill>
                             );
                         })}
-                        {seedance20 ? <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} /> : null}
+                        {seedance20 && !profile ? <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} /> : null}
                     </div>
                     {isSeedanceFastOrMiniModel(model) ? <div className="text-[11px] leading-4 opacity-55">fast / mini 模型不支持 1080p，会自动使用 720p。</div> : null}
                 </SettingGroup>
@@ -305,7 +307,7 @@ function SeedanceVideoSettingsPanel({ config, modelName, onConfigChange, theme, 
                     <>
                         <SettingGroup title="时长" color={theme.node.muted}>
                             <div className="grid grid-cols-4 gap-2.5">
-                                {seedanceDurationOptions.filter((value) => value <= maxSeconds).map((value) => (
+                                {seedanceDurationOptions.filter((value) => value > 0 && value >= (profile?.minSeconds ?? 1) && value <= (profile?.maxSeconds ?? maxSeconds)).map((value) => (
                                     <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                         {value === -1 ? "智能" : `${value}s`}
                                     </OptionPill>

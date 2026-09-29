@@ -1,4 +1,5 @@
 import axios from "axios";
+import { nanoid } from "nanoid";
 import { isOpenRouterBaseURL, openRouterVideoBody } from "./protocols/openrouter-video";
 
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
@@ -17,7 +18,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-export type VideoResponse = { id: string; task_id?: string; video_id?: string; source_id?: string; sourceId?: string; channelId?: string; userChannelId?: string; channelName?: string; workflowRef?: string; channel_id?: string; user_channel_id?: string; channel_name?: string; status?: string; video_url?: string; url?: string; storageKey?: string; progress?: number; error?: { message?: string }; size?: string; seconds?: string; model?: string; created_at?: string | number; createdAt?: string | number; started_at?: string | number; startedAt?: string | number; request_body?: string };
+export type VideoResponse = { id: string; task_id?: string; video_id?: string; source_id?: string; sourceId?: string; channelId?: string; userChannelId?: string; channelName?: string; workflowRef?: string; channel_id?: string; user_channel_id?: string; channel_name?: string; status?: string; phase?: string; error_detail?: string; video_url?: string; url?: string; storageKey?: string; progress?: number; error?: { message?: string }; size?: string; seconds?: string; model?: string; created_at?: string | number; createdAt?: string | number; started_at?: string | number; startedAt?: string | number; request_body?: string };
 type ApiVideoEnvelope = { code: number; data?: VideoResponse | VideoResponse[] | null; msg?: string; message?: string };
 type ApiVideoResponse = VideoResponse | ApiVideoEnvelope;
 export type VideoGenerationResult = { id: string; url: string; durationMs: number; width: number; height: number; bytes: number; mimeType: string; task: VideoResponse };
@@ -123,7 +124,8 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     try {
         const createOptions = normalizeVideoTaskCreateOptions(options);
         const accountProxy = usesAccountProxy(config);
-        const headers = { ...aiHeaders(config), ...(accountProxy && createOptions.clientTaskId ? { "X-Client-Video-Task-ID": createOptions.clientTaskId } : {}), ...(accountProxy && createOptions.source ? { "X-Video-Task-Source": createOptions.source } : {}), ...(accountProxy && createOptions.sourceId ? { "X-Video-Task-Source-ID": createOptions.sourceId } : {}) };
+        const clientTaskId = createOptions.clientTaskId || (accountProxy ? `client_video_task_${nanoid()}` : "");
+        const headers = { ...aiHeaders(config), ...(accountProxy && clientTaskId ? { "X-Client-Video-Task-ID": clientTaskId } : {}), ...(accountProxy && createOptions.source ? { "X-Video-Task-Source": createOptions.source } : {}), ...(accountProxy && createOptions.sourceId ? { "X-Video-Task-Source-ID": createOptions.sourceId } : {}) };
         const directProvider = !accountProxy ? directAIProviderForConfig(config) : null;
         const channel = localChannelForActiveModel(config);
         const createUrl = !accountProxy && isGeminiConfig(config, model)

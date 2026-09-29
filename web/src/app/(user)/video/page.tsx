@@ -19,7 +19,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { isMiniMaxH3Config } from "@/lib/minimax-video";
 import { ARK_SEEDANCE_REFERENCE_LIMITS, boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { COGVIDEOX3_DURATIONS, isAgnesVideoV25Model, isCogVideoX3Model, isFalKlingV21MasterModel, modelKey, normalizeCogVideoX3Duration, normalizeFalKlingV21Duration, supportsVideoAudioGeneration, supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
+import { COGVIDEOX3_DURATIONS, isAgnesVideoV25Model, isCogVideoX3Model, isFalKlingV21MasterModel, modelKey, normalizeCogVideoX3Duration, normalizeFalKlingV21Duration, supportsVideoAudioGeneration, supportsVideoFrameReferences, videoModelProfile } from "@/lib/video-model-capabilities";
 import { deleteStoredMedia, downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer } from "@/services/file-storage";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { deleteVideoGenerationLogs, fetchVideoGenerationLogs, saveVideoGenerationLogs } from "@/services/api/generation-logs";
@@ -746,6 +746,10 @@ export default function VideoPage() {
     };
 
     const retryResult = (result: GenerationResult) => {
+        if (["submitting", "submission_unknown", "recovery_needed"].includes(result.task?.phase || "")) {
+            message.warning("该视频任务尚未确认最终结果。请先核对服务商任务状态，再新建任务，避免重复扣费。");
+            return;
+        }
         const retryChannelId = videoTaskChannelId(result.task);
         const snapshot = buildRequestSnapshot({ promptText: result.prompt, negativePromptText: result.config.videoNegativePrompt || "", referenceItems: result.references, firstFrameItem: result.firstFrame, lastFrameItem: result.lastFrame, videoReferenceItems: result.videoReferences, audioReferenceItems: result.audioReferences, taskCountValue: 1, configValue: { ...videoConfig, ...result.config, ...(retryChannelId ? { videoChannelId: retryChannelId, activeChannelId: retryChannelId } : {}), model: result.model, videoModel: result.model }, modelValue: result.model, workflowRef: result.providerWorkflowRef || null });
         if (!snapshot) return;
@@ -1120,6 +1124,10 @@ export default function VideoPage() {
     };
 
     const retryGenerationLog = (log: GenerationLog) => {
+        if (["submitting", "submission_unknown", "recovery_needed"].includes(log.task?.phase || "")) {
+            message.warning("该视频任务尚未确认最终结果。请先核对服务商任务状态，再新建任务，避免重复扣费。");
+            return;
+        }
         const retryChannelId = videoTaskChannelId(log.task);
         const snapshot = buildRequestSnapshot({ promptText: log.prompt, negativePromptText: log.config.videoNegativePrompt || "", referenceItems: log.references || [], firstFrameItem: log.firstFrame || null, lastFrameItem: log.lastFrame || null, videoReferenceItems: log.videoReferences || [], audioReferenceItems: log.audioReferences || [], taskCountValue: 1, configValue: { ...videoConfig, ...log.config, ...(retryChannelId ? { videoChannelId: retryChannelId, activeChannelId: retryChannelId } : {}), model: log.model, videoModel: log.model }, modelValue: log.model, workflowRef: log.providerWorkflowRef || null });
         if (!snapshot) return;
@@ -1459,7 +1467,10 @@ function WorkbenchPanel({
     const { data: autodlWorkflow } = useAutoDLWorkflow(config, model);
     const cogVideoX3 = !config.videoWorkflowRef && isCogVideoX3Model(model);
     const falKlingV21 = !config.videoWorkflowRef && isFalKlingV21MasterModel(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
-    const audioGenerationEnabled = supportsVideoAudioGeneration(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
+    const videoProtocol = channelProtocolForConfig({ ...config, model, videoModel: model });
+    const videoProfile = !config.videoWorkflowRef ? videoModelProfile(model, videoProtocol) : null;
+    const profileResolutionOptions = videoProfile ? videoResolutionOptions.filter((item) => videoProfile.resolutions.includes(item.value)) : null;
+    const audioGenerationEnabled = videoProfile?.supportsAudio ?? supportsVideoAudioGeneration(model, videoProtocol);
     const generateAudio = boolConfig(config.videoGenerateAudio, false);
     const klingBottomConfig = config.videoWorkflowRef ? null : resolveKlingWorkbenchConfig(config, model);
     const klingBottomVariant = klingBottomConfig?.variant || "";
@@ -1471,6 +1482,30 @@ function WorkbenchPanel({
         ? showAudioSwitch ? "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.8fr_0.8fr_0.7fr_auto_auto]" : "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.8fr_0.7fr_auto_auto]"
         : showAudioSwitch ? "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.8fr_0.7fr_auto_auto]" : "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.7fr_auto_auto]";
     const initializedKlingV3BottomSecondsRef = useRef(false);
+
+    const handleVideoModelChange = (nextModel: string, channelId?: string) => {
+        const nextConfig = { ...config, model: nextModel, videoModel: nextModel, ...(channelId ? { activeChannelId: channelId, videoChannelId: channelId } : {}) };
+        const nextProtocol = channelProtocolForConfig(nextConfig);
+        const profile = videoModelProfile(nextModel, nextProtocol);
+        updateConfig("videoModel", nextModel);
+        if (channelId) updateConfig("videoChannelId", channelId);
+        if (!profile) return;
+
+        const currentResolution = normalizeVideoResolutionValue(config.vquality);
+        if (!profile.resolutions.includes(currentResolution)) {
+            updateConfig("vquality", profile.defaultResolution);
+            updateConfig("size", videoSizeForResolution(profile.defaultResolution, config.size));
+        }
+        const currentSeconds = Number(config.videoSeconds);
+        const seconds = Number.isFinite(currentSeconds) && currentSeconds > 0
+            ? Math.max(profile.minSeconds, Math.min(profile.maxSeconds, Math.floor(currentSeconds)))
+            : profile.minSeconds;
+        if (profile.durationOptions?.length) {
+            const selected = profile.durationOptions.reduce((nearest, option) => Math.abs(Number(option) - seconds) < Math.abs(Number(nearest) - seconds) ? option : nearest);
+            if (config.videoSeconds !== selected) updateConfig("videoSeconds", selected);
+        } else if (String(seconds) !== config.videoSeconds) updateConfig("videoSeconds", String(seconds));
+        if (!profile.supportsAudio && boolConfig(config.videoGenerateAudio, false)) updateConfig("videoGenerateAudio", "false");
+    };
 
     useEffect(() => {
         if (klingBottomVariant !== "v3" || initializedKlingV3BottomSecondsRef.current) return;
@@ -1517,15 +1552,15 @@ function WorkbenchPanel({
                         <div className={`grid grid-cols-2 gap-2 sm:grid-cols-3 ${bottomSettingsGridClass} ${bottomSettingsCollapsed ? "hidden lg:grid" : "grid"}`}>
                             <label className="grid gap-1 text-xs text-stone-500 dark:text-stone-400">
                                 模型
-                                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={(value, channelId) => { updateConfig("videoModel", value); if (channelId) updateConfig("videoChannelId", channelId); }} capability="video" className="canvas-compact-control !h-11 !rounded-xl" onMissingConfig={() => openConfigDialog(false)} fullWidth />
+                                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={handleVideoModelChange} capability="video" className="canvas-compact-control !h-11 !rounded-xl" onMissingConfig={() => openConfigDialog(false)} fullWidth />
                             </label>
                             {klingBottom ? (
                                 <KlingV26BottomSettings config={config} updateConfig={updateConfig} generateAudio={generateAudio} isKlingV3={klingBottomVariant === "v3"} />
                             ) : (
                                 <>
-                                    <QuickSelect label="清晰度" value={normalizeVideoResolutionValue(config.vquality)} options={isSeedanceVideoConfig(config) ? videoResolutionOptions.slice(0, 3) : videoResolutionOptions} onChange={(value) => { updateConfig("vquality", value); updateConfig("size", videoSizeForResolution(value, config.size)); }} />
+                                    <QuickSelect label="清晰度" value={normalizeVideoResolutionValue(config.vquality)} options={profileResolutionOptions || (isSeedanceVideoConfig(config) ? videoResolutionOptions.slice(0, 3) : videoResolutionOptions)} onChange={(value) => { updateConfig("vquality", value); updateConfig("size", videoSizeForResolution(value, config.size)); }} />
                                     <QuickSelect label="尺寸" value={videoSizeForResolution(config.vquality, config.size)} options={videoSizeOptions(config.vquality)} onChange={(value) => updateConfig("size", value)} />
-                                    {cogVideoX3 ? <QuickSelect label="秒数" value={normalizeCogVideoX3Duration(config.videoSeconds)} options={cogVideoX3DurationOptions} onChange={(value) => updateConfig("videoSeconds", value)} /> : falKlingV21 ? <QuickSelect label="秒数" value={normalizeFalKlingV21Duration(config.videoSeconds)} options={[{ value: "5", label: "5 秒" }, { value: "10", label: "10 秒" }]} onChange={(value) => updateConfig("videoSeconds", value)} /> : <QuickNumber label="秒数" value={autodl ? config.videoSeconds ?? "" : normalizeVideoSeconds(config.videoSeconds)} min={1} max={30} onChange={(value) => updateConfig("videoSeconds", value)} clampOnChange={!autodl} normalizeOnBlur={autodl ? (value) => normalizeAutoDLDuration(value, autodlWorkflow) : undefined} />}
+                                    {videoProfile?.durationOptions?.length ? <QuickSelect label="秒数" value={String(config.videoSeconds || videoProfile.minSeconds)} options={videoProfile.durationOptions.map((value) => ({ value, label: `${value} 秒` }))} onChange={(value) => updateConfig("videoSeconds", value)} /> : cogVideoX3 ? <QuickSelect label="秒数" value={normalizeCogVideoX3Duration(config.videoSeconds)} options={cogVideoX3DurationOptions} onChange={(value) => updateConfig("videoSeconds", value)} /> : falKlingV21 ? <QuickSelect label="秒数" value={normalizeFalKlingV21Duration(config.videoSeconds)} options={[{ value: "5", label: "5 秒" }, { value: "10", label: "10 秒" }]} onChange={(value) => updateConfig("videoSeconds", value)} /> : <QuickNumber label="秒数" value={autodl ? config.videoSeconds ?? "" : normalizeVideoSeconds(config.videoSeconds)} min={videoProfile?.minSeconds ?? 1} max={videoProfile?.maxSeconds ?? 30} onChange={(value) => updateConfig("videoSeconds", value)} clampOnChange={!autodl} normalizeOnBlur={autodl ? (value) => normalizeAutoDLDuration(value, autodlWorkflow) : undefined} />}
                                     {audioGenerationEnabled ? <QuickSwitch label="生成音频" checked={generateAudio} onChange={(checked) => updateConfig("videoGenerateAudio", String(checked))} /> : null}
                                     {motionControl ? <QuickSelect label="角色朝向参考" value={normalizeCharacterOrientation(config.videoCharacterOrientation)} options={characterOrientationOptions} onChange={(value) => updateConfig("videoCharacterOrientation", value)} /> : null}
                                 </>
@@ -1851,11 +1886,30 @@ function QuickSwitch({ label, checked, onChange }: { label: string; checked: boo
 
 function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const handleVideoModelChange = (nextModel: string, channelId?: string) => {
+        const nextConfig = { ...config, model: nextModel, videoModel: nextModel, ...(channelId ? { activeChannelId: channelId, videoChannelId: channelId } : {}) };
+        const profile = videoModelProfile(nextModel, channelProtocolForConfig(nextConfig));
+        updateConfig("videoModel", nextModel);
+        if (channelId) updateConfig("videoChannelId", channelId);
+        if (!profile) return;
+        const currentResolution = normalizeVideoResolutionValue(config.vquality);
+        if (!profile.resolutions.includes(currentResolution)) {
+            updateConfig("vquality", profile.defaultResolution);
+            updateConfig("size", videoSizeForResolution(profile.defaultResolution, config.size));
+        }
+        const currentSeconds = Number(config.videoSeconds);
+        const seconds = Number.isFinite(currentSeconds) && currentSeconds > 0 ? Math.max(profile.minSeconds, Math.min(profile.maxSeconds, Math.floor(currentSeconds))) : profile.minSeconds;
+        const selectedSeconds = profile.durationOptions?.length
+            ? profile.durationOptions.reduce((nearest, option) => Math.abs(Number(option) - seconds) < Math.abs(Number(nearest) - seconds) ? option : nearest)
+            : String(seconds);
+        if (config.videoSeconds !== selectedSeconds) updateConfig("videoSeconds", selectedSeconds);
+        if (!profile.supportsAudio && boolConfig(config.videoGenerateAudio, false)) updateConfig("videoGenerateAudio", "false");
+    };
 
     return (
         <div className="space-y-3">
             <WorkbenchSection title="模型">
-                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={(value, channelId) => { updateConfig("videoModel", value); if (channelId) updateConfig("videoChannelId", channelId); }} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={handleVideoModelChange} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </WorkbenchSection>
             <VideoSettingsPanel config={config} modelName={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-3" />
         </div>

@@ -62,6 +62,8 @@ type VideoTaskPollUpdate struct {
 	Error        string
 	ErrorDetail  string
 	ResponseBody string
+	Phase        string
+	Retryable    bool
 }
 
 type VideoTaskPollFunc func(model.VideoTask) (VideoTaskPollUpdate, error)
@@ -152,6 +154,7 @@ func VideoTaskResponse(task model.VideoTask) map[string]any {
 		"source":        task.Source,
 		"source_id":     task.SourceID,
 		"status":        task.Status,
+		"phase":         task.Phase,
 		"progress":      task.Progress,
 		"task_id":       firstVideoTaskValue(task.UpstreamTaskID, task.ID),
 		"video_id":      task.UpstreamVideoID,
@@ -214,12 +217,16 @@ func WakeVideoTaskPoller() {
 
 func runVideoTaskPoller() {
 	inFlight := sync.Map{}
+	pollSlots := make(chan struct{}, 16)
 	lastCleanupAt := time.Time{}
 	lastImageCleanupAt := time.Time{}
 	workflowCursorCreatedAt, workflowCursorID := "", ""
 	for range videoTaskPollWake {
 		for {
 			current := time.Now()
+			if err := repository.MarkStaleVideoSubmissions(videoTaskTime(current.Add(-3*time.Minute)), videoTaskTime(current)); err != nil {
+				log.Printf("mark stale video submissions failed err=%v", err)
+			}
 			hasComfyTasks, comfyErr := expireComfyBridgeRequests("")
 			if comfyErr != nil {
 				log.Printf("expire Comfy Bridge requests failed err=%v", comfyErr)
@@ -236,6 +243,10 @@ func runVideoTaskPoller() {
 				log.Printf("list due video tasks failed err=%v", err)
 				waitForNextVideoTaskPoll()
 				continue
+			}
+			pendingVideoSubmissions, pendingSubmissionErr := repository.HasPendingVideoSubmissions()
+			if pendingSubmissionErr != nil {
+				log.Printf("check pending video submissions failed err=%v", pendingSubmissionErr)
 			}
 			workflowTasks, workflowErr := repository.ListDueRunningHubWorkflowTasks(workflowCursorCreatedAt, workflowCursorID, runningHubWorkflowPageSize)
 			if workflowErr == nil && len(workflowTasks) == 0 && workflowCursorCreatedAt != "" {
@@ -255,8 +266,8 @@ func runVideoTaskPoller() {
 			if imageErr != nil {
 				log.Printf("check active canvas image tasks failed err=%v", imageErr)
 			}
-			if len(tasks) == 0 && len(workflowTasks) == 0 && !hasComfyTasks && !hasComfyCleanup && !hasImageTasks {
-				if workflowErr != nil || comfyErr != nil || cleanupErr != nil || imageErr != nil {
+			if len(tasks) == 0 && len(workflowTasks) == 0 && !pendingVideoSubmissions && !hasComfyTasks && !hasComfyCleanup && !hasImageTasks {
+				if workflowErr != nil || pendingSubmissionErr != nil || comfyErr != nil || cleanupErr != nil || imageErr != nil {
 					waitForNextVideoTaskPoll()
 					continue
 				}
@@ -288,13 +299,15 @@ func runVideoTaskPoller() {
 				}
 				go func(task model.VideoTask) {
 					defer inFlight.Delete(task.ID)
+					pollSlots <- struct{}{}
+					defer func() { <-pollSlots }()
 					poll := currentVideoTaskPoller()
 					if poll == nil {
 						return
 					}
 					update, err := poll(task)
 					if err != nil {
-						update = VideoTaskPollUpdate{Status: task.Status, ErrorDetail: err.Error()}
+						update = VideoTaskPollUpdate{Status: task.Status, ErrorDetail: err.Error(), Retryable: true}
 					}
 					if err := UpdateVideoTaskFromPoll(task, update); err != nil {
 						log.Printf("update video task failed id=%s err=%v", task.ID, err)
@@ -329,43 +342,70 @@ func waitForNextVideoTaskPoll() {
 }
 
 func UpdateVideoTaskFromPoll(task model.VideoTask, update VideoTaskPollUpdate) error {
-	current := now()
-	task.Status = NormalizeVideoTaskStatus(firstVideoTaskValue(update.Status, task.Status))
-	if task.Status == "" {
-		task.Status = "processing"
-	}
-	if update.Progress > 0 || task.Progress == 0 {
-		task.Progress = clampProgress(update.Progress)
-	}
-	if strings.TrimSpace(update.Seconds) != "" {
-		task.Seconds = strings.TrimSpace(update.Seconds)
-	}
-	if strings.TrimSpace(update.Size) != "" {
-		task.Size = strings.TrimSpace(update.Size)
-	}
-	if strings.TrimSpace(update.VideoURL) != "" {
-		task.VideoURL = strings.TrimSpace(update.VideoURL)
-	}
-	if strings.TrimSpace(update.Error) != "" {
-		task.Error = strings.TrimSpace(update.Error)
-	}
-	if strings.TrimSpace(update.ErrorDetail) != "" {
-		task.ErrorDetail = strings.TrimSpace(update.ErrorDetail)
-	}
+	current := time.Now().UTC()
+	timestamp := videoTaskTime(current)
+	task.UpdatedAt, task.LastPolledAt = timestamp, timestamp
 	if update.ResponseBody != "" {
 		task.LastResponse = update.ResponseBody
 	}
-	task.UpdatedAt = current
-	task.LastPolledAt = videoTaskTime(time.Now())
-	if task.VideoURL != "" || IsCompletedVideoTaskStatus(task.Status) {
-		task.Status = "completed"
-		task.Progress = 100
-		task.CompletedAt = current
-		task.Error = ""
-		task.ErrorDetail = ""
-	} else if task.Error != "" || IsFailedVideoTaskStatus(task.Status) {
-		task.Status = "failed"
-		task.CompletedAt = current
+	if update.Retryable {
+		task.PollFailures++
+		task.ErrorDetail = strings.TrimSpace(update.ErrorDetail)
+		if task.PollFailures >= 12 {
+			task.Phase, task.Status = model.GenerationRecovery, "failed"
+			task.Error = "多次查询上游任务失败；未退款。请核对服务商任务后再决定是否重新生成。"
+			task.CompletedAt = timestamp
+			task.NextPollAt = ""
+		} else {
+			task.NextPollAt = videoTaskTime(current.Add(time.Duration(1<<min(task.PollFailures-1, 5)) * 5 * time.Second))
+		}
+	} else {
+		task.PollFailures = 0
+		task.NextPollAt = ""
+		task.ErrorDetail = strings.TrimSpace(update.ErrorDetail)
+		if update.Error != "" {
+			task.Error = strings.TrimSpace(update.Error)
+		}
+		if update.Phase == model.GenerationRetrieving {
+			task.PollFailures++
+			task.Status = "processing"
+			task.Error = ""
+			if task.PollFailures >= 12 {
+				task.Phase, task.Status = model.GenerationRecovery, "failed"
+				task.Error = "视频已生成，但多次读取结果失败；未退款。请核对服务商任务后再决定是否重新生成。"
+				task.CompletedAt, task.NextPollAt = timestamp, ""
+			} else {
+				task.Phase = model.GenerationRetrieving
+				task.NextPollAt = videoTaskTime(current.Add(time.Duration(1<<min(task.PollFailures-1, 5)) * 5 * time.Second))
+			}
+		} else {
+			task.Status = NormalizeVideoTaskStatus(firstVideoTaskValue(update.Status, task.Status))
+			if task.Status == "" {
+				task.Status = "processing"
+			}
+			if update.Progress > 0 || task.Progress == 0 {
+				task.Progress = clampProgress(update.Progress)
+			}
+			task.Seconds = firstVideoTaskValue(update.Seconds, task.Seconds)
+			task.Size = firstVideoTaskValue(update.Size, task.Size)
+			task.VideoURL = firstVideoTaskValue(update.VideoURL, task.VideoURL)
+			switch {
+			case task.VideoURL != "" || IsCompletedVideoTaskStatus(task.Status):
+				task.Phase, task.Status, task.Progress, task.CompletedAt = model.GenerationCompleted, "completed", 100, timestamp
+				task.Error, task.ErrorDetail = "", ""
+			case IsFailedVideoTaskStatus(task.Status):
+				task.Phase, task.CompletedAt = model.GenerationFailed, timestamp
+				task.Error = firstVideoTaskValue(task.Error, task.ErrorDetail, "视频任务生成失败")
+			default:
+				task.Phase = model.GenerationRunning
+			}
+		}
+	}
+	if task.Revision > 0 {
+		expected := task.Revision
+		task.Revision++
+		_, err := repository.CommitVideoTask(task, expected, nil)
+		return err
 	}
 	_, err := repository.SaveVideoTask(task)
 	return err

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { useAutoDLWorkflowNames } from "@/hooks/use-autodl-workflow";
 import { isWorkflowProtocol } from "@/lib/model-channel";
 import { cn } from "@/lib/utils";
-import { isFalTextToVideoModel } from "@/lib/video-model-capabilities";
+import { isFalTextToVideoModel, videoModelSummary } from "@/lib/video-model-capabilities";
 import type { WorkflowRef } from "@/lib/workflow-channel";
 import { filterModelsByCapability, normalizeLocalChannels, useConfigStore, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -129,7 +129,7 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
                 {options.length ? (
                     options.map((option) => (
                         <SelectItem key={option.key} value={option.key} textValue={`${"workflowRef" in option ? option.label : modelLabel(option.model, option)} ${option.model} ${option.channelName}`}>
-                            <ModelLabel model={"workflowRef" in option ? option.workflowRef.workflowId : option.model} label={"workflowRef" in option ? `工作流 · ${option.label}` : modelLabel(option.model, option)} channelName={option.channelName} />
+                            <ModelLabel model={"workflowRef" in option ? option.workflowRef.workflowId : option.model} label={"workflowRef" in option ? `工作流 · ${option.label}` : modelLabel(option.model, option)} channelName={option.channelName} details={capability === "video" && !("workflowRef" in option) ? videoModelSummary(option.model, option.protocol || "") : null} />
                         </SelectItem>
                     ))
                 ) : (
@@ -142,12 +142,19 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
     );
 }
 
-function ModelLabel({ model, label, channelName }: { model: string; label?: string; channelName?: string }) {
+function ModelLabel({ model, label, channelName, details }: { model: string; label?: string; channelName?: string; details?: { resolution: string; duration: string; supportsAudio: boolean } | null }) {
     return (
-        <span className="flex min-w-0 items-center gap-2">
-            <ModelIcon model={model} />
-            <span className="truncate" title={model}>{label || model}</span>
-            {channelName ? <span className="ml-auto max-w-24 shrink-0 truncate text-xs opacity-50">{channelName}</span> : null}
+        <span className="flex min-w-0 flex-col gap-1 py-1">
+            <span className="flex min-w-0 items-center gap-2">
+                <ModelIcon model={model} />
+                <span className="truncate" title={model}>{label || model}</span>
+                {channelName ? <span className="ml-auto max-w-24 shrink-0 truncate text-xs opacity-50">{channelName}</span> : null}
+            </span>
+            {details ? <span className="flex flex-wrap gap-1.5 pl-6 text-[11px] leading-4 text-muted-foreground">
+                <span className="rounded-full bg-muted px-1.5">{details.resolution}</span>
+                <span className="rounded-full bg-muted px-1.5">{details.duration}</span>
+                <span className="rounded-full bg-muted px-1.5">{details.supportsAudio ? "支持音频" : "无音频"}</span>
+            </span> : null}
         </span>
     );
 }

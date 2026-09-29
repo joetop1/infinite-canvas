@@ -304,7 +304,7 @@ func transformFalVideoStatusResponse(payload []byte, request *http.Request, chan
 		}
 		videoURL, message := fetchFalVideoURL(request, channel, root)
 		if message != "" {
-			return marshalDirectMap(map[string]any{"status": "failed", "error": message})
+			return marshalDirectMap(map[string]any{"status": "processing", "phase": "retrieving", "error_detail": message})
 		}
 		return marshalDirectMap(map[string]any{"status": "completed", "progress": 100, "video_url": videoURL, "url": videoURL})
 	case "IN_QUEUE", "IN_PROGRESS", "":

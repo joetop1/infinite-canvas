@@ -112,3 +112,62 @@ export function supportsVideoAudioGeneration(modelName: string, protocol = "") {
         model.includes("viduq3-turbo")
     );
 }
+
+export type VideoModelProfile = {
+    resolutions: string[];
+    defaultResolution: string;
+    minSeconds: number;
+    maxSeconds: number;
+    durationOptions?: string[];
+    supportsAudio: boolean;
+};
+
+// Profiles are intentionally limited to models whose UI constraints are known.
+// Unlisted models keep the existing generic controls rather than showing guesses.
+export function videoModelProfile(modelName: string, protocol = ""): VideoModelProfile | null {
+    const model = modelName.trim().toLowerCase().split(/[?#]/)[0].replace(/[._/]+/g, "-");
+    if (!model) return null;
+
+    if (model.includes("seedance-2-5")) {
+        const sample480 = model.includes("480p") || model.includes("480");
+        return {
+            resolutions: sample480 ? ["480"] : ["480", "720", "1080"],
+            defaultResolution: sample480 ? "480" : model.includes("720p") ? "720" : "1080",
+            minSeconds: 4, maxSeconds: 30, supportsAudio: true,
+        };
+    }
+    if (model.includes("seedance-2-0")) {
+        const fastOrMini = model.includes("fast") || model.includes("mini");
+        return {
+            resolutions: fastOrMini ? ["720"] : ["480", "720", "1080"],
+            defaultResolution: fastOrMini ? "720" : "1080",
+            minSeconds: 4, maxSeconds: 15, supportsAudio: true,
+        };
+    }
+    if (model.includes("minimax-h3")) {
+        return { resolutions: ["2k"], defaultResolution: "2k", minSeconds: 4, maxSeconds: 15, supportsAudio: false };
+    }
+    if (isCogVideoX3Model(model)) {
+        return { resolutions: ["720"], defaultResolution: "720", minSeconds: 5, maxSeconds: 10, durationOptions: ["5", "10"], supportsAudio: true };
+    }
+    if (isFalKlingV21MasterModel(modelName, protocol)) {
+        return { resolutions: ["720"], defaultResolution: "720", minSeconds: 5, maxSeconds: 10, durationOptions: ["5", "10"], supportsAudio: false };
+    }
+    if (model.includes("veo-3-1") || model.includes("veo3-1")) {
+        return { resolutions: ["720", "1080", "4k"], defaultResolution: "720", minSeconds: 4, maxSeconds: 8, durationOptions: ["4", "6", "8"], supportsAudio: true };
+    }
+    if (model.includes("kling-2-6") || model.includes("kling-v2-6")) {
+        return { resolutions: ["720", "1080"], defaultResolution: "720", minSeconds: 5, maxSeconds: 10, durationOptions: ["5", "10"], supportsAudio: supportsVideoAudioGeneration(modelName, protocol) };
+    }
+    return null;
+}
+
+export function videoModelSummary(modelName: string, protocol = "") {
+    const profile = videoModelProfile(modelName, protocol);
+    if (!profile) return null;
+    const highestResolution = profile.resolutions[profile.resolutions.length - 1];
+    const duration = profile.durationOptions?.length
+        ? `${profile.durationOptions[0]}–${profile.durationOptions[profile.durationOptions.length - 1]}秒`
+        : `${profile.minSeconds}–${profile.maxSeconds}秒`;
+    return { resolution: highestResolution === "2k" ? "2K" : `${highestResolution}p`, duration, supportsAudio: profile.supportsAudio };
+}

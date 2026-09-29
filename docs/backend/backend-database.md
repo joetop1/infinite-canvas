@@ -208,8 +208,16 @@ S3/R2 与 WebDAV 共用的媒体文件索引表，不保存画布、素材列表
 | `started_at` | string | 上游开始时间 |
 | `completed_at` | string | 完成时间 |
 | `last_polled_at` | string | 最近轮询时间 |
+| `client_task_id` | string | 客户端幂等编号；配合用户 ID 派生任务主键，重复提交返回同一条记录 |
+| `request_fingerprint` | string | 请求内容指纹；同一编号对应不同请求时拒绝提交 |
+| `phase` | string | 任务阶段：提交中、提交结果不明、排队/运行、取结果、完成、失败或需核实 |
+| `revision` | number | 状态版本号；防止过期轮询覆盖新状态 |
+| `poll_failures` | number | 连续状态查询/结果读取失败次数 |
+| `next_poll_at` | string | 下次允许轮询时间，用于退避 |
+| `refunded_at` | string | 预扣退款时间，确保拒绝请求只退款一次 |
+| `hidden` | boolean | 用户删除历史卡片时隐藏记录；保留幂等记录与后台任务 |
 
-后台轮询器按 `status + created_at` 查询未完成任务；旧数据库中如果残留废弃列，不再参与代码查询。
+后台轮询器按可轮询状态与 `next_poll_at` 查询未完成任务，并限制并发。视频请求先原子写入任务和算力点流水，再访问服务商；只有明确拒绝的请求才在同一事务内退款。提交结果不明、查询持续失败和结果读取失败均保留记录且不会自动重新提交。新增字段由 GORM 自动迁移，旧任务的空阶段继续沿用兼容路径。
 
 ### video_generation_logs
 

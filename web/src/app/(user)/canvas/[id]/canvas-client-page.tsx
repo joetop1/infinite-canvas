@@ -3746,6 +3746,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         async (node: CanvasNodeData) => {
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
             const retryWorkflowRef = node.metadata?.workflowRef;
+            if (node.type === CanvasNodeType.Video && ["submitting", "submission_unknown", "recovery_needed"].includes(node.metadata?.videoTaskPhase || "")) {
+                message.warning("该视频任务尚未确认最终结果。请先核对服务商任务状态，再新建任务，避免重复扣费。");
+                return;
+            }
             const batchPrimaryId = retryWorkflowRef && isCanvasImageNodeType(node.type) && node.metadata?.isBatchRoot ? node.metadata.primaryImageId : undefined;
             const retryTargetId = batchPrimaryId && nodesRef.current.some((item) => item.id === batchPrimaryId) ? batchPrimaryId : node.id;
             const retryBatchRootId = retryWorkflowRef && isCanvasImageNodeType(node.type) ? (retryTargetId === node.id ? node.metadata?.batchRootId : node.id) : undefined;
@@ -3797,13 +3801,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             setRunningNodeId(node.id);
             const retryStartedAt = Date.now();
             const retrySuffix = retryWorkflowRef ? nanoid() : node.id;
-            const retryVideoTaskId = node.type === CanvasNodeType.Video ? `client_video_task_${retrySuffix}` : "";
+            const retryVideoTaskId = node.type === CanvasNodeType.Video ? `client_video_task_${nanoid()}` : "";
             const retryImageTaskId = isCanvasImageNodeType(node.type) ? `client_image_task_${retrySuffix}` : "";
             const retryAudioTaskId = node.type === CanvasNodeType.Audio ? `client_audio_task_${retrySuffix}` : "";
             setNodes((prev) => prev.map((item) => {
                 const isRetryTarget = item.id === retryTargetId;
                 if (!isRetryTarget && !(retryMirrorsRoot && item.id === retryBatchRootId)) return item;
-                return { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, content: undefined, storageKey: "", progress: 0, startedAt: retryStartedAt, ...(item.type === CanvasNodeType.Video ? { videoTaskId: retryVideoTaskId, videoTaskVideoId: undefined } : {}), ...(isCanvasImageNodeType(item.type) ? { imageTaskId: isRetryTarget ? retryImageTaskId : undefined, imageTaskResultId: undefined } : {}), ...(item.type === CanvasNodeType.Audio ? { audioTaskId: retryAudioTaskId, audioTaskResultId: undefined } : {}) } };
+                return { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, content: undefined, storageKey: "", progress: 0, startedAt: retryStartedAt, ...(item.type === CanvasNodeType.Video ? { videoTaskId: retryVideoTaskId, videoTaskPhase: undefined, videoTaskVideoId: undefined } : {}), ...(isCanvasImageNodeType(item.type) ? { imageTaskId: isRetryTarget ? retryImageTaskId : undefined, imageTaskResultId: undefined } : {}), ...(item.type === CanvasNodeType.Audio ? { audioTaskId: retryAudioTaskId, audioTaskResultId: undefined } : {}) } };
             }));
 
             try {
@@ -5258,6 +5262,7 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
             durationMs: Date.now() - taskStartedAt,
             progress,
             videoTaskId: task.task_id || task.id || node.metadata?.videoTaskId,
+            videoTaskPhase: task.phase,
             videoTaskVideoId: task.video_id || node.metadata?.videoTaskVideoId,
         };
         if (!completed || !url) return { ...node, metadata };
