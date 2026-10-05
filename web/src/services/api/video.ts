@@ -1,6 +1,7 @@
 import axios from "axios";
 import { nanoid } from "nanoid";
 import { isOpenRouterBaseURL, openRouterVideoBody } from "./protocols/openrouter-video";
+import { newAPISeedanceVideoBody } from "./protocols/newapi-seedance-video";
 
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { isMiniMaxH3Config, normalizeMiniMaxH3Duration, normalizeMiniMaxH3Ratio, normalizeMiniMaxH3Resolution } from "@/lib/minimax-video";
@@ -372,6 +373,18 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
     }
     if (videoChannelProtocol(config, model) === "88api") return create88APIVideoRequestBody(config, model, prompt, input);
     if (videoChannelProtocol(config, model) === "ark") return createArkSeedanceVideoRequestBody(config, model, prompt, input);
+    if (videoChannelProtocol(config, model) === "openai" && /^doubao-seedance-2-(?:0|5)(?:-|$)/i.test(model)) {
+        const mediaURL = async (reference: ReferenceVideo | ReferenceAudio) => {
+            const url = publicHttpUrl(await resolveMediaUrl(reference.storageKey, reference.url));
+            if (!url) throw new VideoRequestError("New API Seedance 的参考视频和音频需要可公开访问的网络地址");
+            return url;
+        };
+        return newAPISeedanceVideoBody({
+            ...await createArkSeedanceVideoRequestBody(config, model, prompt, input),
+            "video_reference[]": await Promise.all(input.videoReferences.map(mediaURL)),
+            "audio_reference[]": await Promise.all(input.audioReferences.map(mediaURL)),
+        });
+    }
     const size = normalizeVideoSize(config.size);
     if (isGeminiVideoModel(model) && isGeminiConfig(config, model)) return createGeminiVeoRequestBody(config, model, prompt, input);
     if (isGrok2APIVideoConfig(config, model)) return createGrok2APIVideoRequestBody(config, model, prompt, input);

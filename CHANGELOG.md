@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## v0.8.0-custom.6
+
++ [修复] OpenAI 中转渠道的豆包 Seedance 请求按 New API 格式传递参考素材和视频参数，避免图片被忽略。
 
 ## v0.8.0-custom.5
 
