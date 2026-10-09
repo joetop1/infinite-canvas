@@ -96,6 +96,7 @@ export type CanvasNodeMetadata = {
     videoTaskId?: string;
     videoTaskPhase?: string;
     videoTaskVideoId?: string;
+    videoReferenceMode?: "omni" | "frames";
     firstFrameNodeId?: string;
     lastFrameNodeId?: string;
     multiShot?: string;

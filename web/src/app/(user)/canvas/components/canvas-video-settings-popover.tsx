@@ -8,6 +8,7 @@ import { Button, Input, Switch } from "antd";
 import { VideoSettingsPanel, isAPIMartKlingMotionControlConfig, isKIEKlingMotionControlConfig, isAPIMartKlingV3Config, isKIEKlingV3Config, kieKlingOmniVariant, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { isAutoDLConfig } from "@/lib/autodl";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { omniReferenceLimits } from "@/lib/video-reference-mode";
 import { supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { channelProtocolForConfig, type AiConfig } from "@/stores/use-config-store";
@@ -70,7 +71,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, frameOption
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={buttonIcon || <Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
                     <span className="truncate">
-                        {videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}
+                        {!visualOnly && metadata?.videoReferenceMode ? <>{metadata.videoReferenceMode === "omni" ? "全能参考" : "首尾帧"} · </> : null}{videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}
                         {visualOnly ? null : <> · {videoSecondsLabel(config.videoSeconds)}</>}
                     </span>
                 </Button>
@@ -96,6 +97,8 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
     const isKlingMotionControl = isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model);
     const isKlingV3 = isAPIMartKlingV3 || isKIEKlingV3;
     const frameReferencesEnabled = !isKlingV3 && supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model }));
+    const omniLimits = !visualOnly && onMetadataChange ? omniReferenceLimits(config) : null;
+    const referenceMode = metadata?.videoReferenceMode || (firstFrameNodeId || lastFrameNodeId ? "frames" : "omni");
     const optionIds = useMemo(() => new Set(frameOptions.map((item) => item.nodeId)), [frameOptions]);
     const firstFrameValue = firstFrameNodeId && optionIds.has(firstFrameNodeId) ? firstFrameNodeId : "";
     const lastFrameValue = lastFrameNodeId && optionIds.has(lastFrameNodeId) ? lastFrameNodeId : "";
@@ -106,7 +109,14 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
                 <div className="text-lg font-semibold">视频设置</div>
                 {!visualOnly && isKlingMotionControl ? <CharacterOrientationSetting value={config.videoCharacterOrientation} theme={theme} onChange={(value) => onConfigChange("videoCharacterOrientation", value)} /> : null}
                 {!visualOnly && isKlingV3 ? <KlingV3AdvancedSettings config={config} metadata={metadata} resourceOptions={resourceOptions} theme={theme} isKIEKlingV3={isKIEKlingV3} kieKlingOmni={kieKlingOmni} onConfigChange={onConfigChange} onMetadataChange={onMetadataChange} /> : null}
-                {!visualOnly && frameReferencesEnabled ? (
+                {omniLimits ? <CanvasSettingGroup title="生成方式" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2">
+                        <OptionPill selected={referenceMode === "frames"} theme={theme} onClick={() => onMetadataChange?.({ videoReferenceMode: "frames" })}>首尾帧</OptionPill>
+                        <OptionPill selected={referenceMode === "omni"} theme={theme} onClick={() => onMetadataChange?.({ videoReferenceMode: "omni" })}>全能参考</OptionPill>
+                    </div>
+                    <div className="text-xs leading-5" style={{ color: theme.node.muted }}>{referenceMode === "omni" ? `使用提示词引用的参考素材：最多 ${omniLimits.images} 张图片、${omniLimits.videos} 个视频、${omniLimits.audios} 个音频。首尾帧不参与本次生成。` : "使用指定的首尾帧图片，普通参考素材不参与本次生成。必须指定首帧。"}</div>
+                </CanvasSettingGroup> : null}
+                {!visualOnly && frameReferencesEnabled && (!omniLimits || referenceMode === "frames") ? (
                     <CanvasSettingGroup title="首尾帧" color={theme.node.muted}>
                         <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
                             <FrameReferencePicker label="首帧" value={firstFrameValue} options={frameOptions} theme={theme} onChange={(value) => onFrameChange?.({ firstFrameNodeId: value || undefined })} />

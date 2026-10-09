@@ -1,4 +1,5 @@
 import axios from "axios";
+import { selectVideoReferenceMode } from "@/lib/video-reference-mode";
 import { nanoid } from "nanoid";
 import { isOpenRouterBaseURL, openRouterVideoBody } from "./protocols/openrouter-video";
 import { newAPISeedanceVideoBody } from "./protocols/newapi-seedance-video";
@@ -112,7 +113,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
-    const input = normalizeVideoReferenceInput(references);
+    const input = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references));
     if (isFalTextToVideoModel(model, videoChannelProtocol(config, model)) && input.references.length + Number(Boolean(input.firstFrame || input.lastFrame)) > 0) {
         throw new VideoRequestError("当前选择的是文生视频模型，不能接收参考图。请改选图生视频或参考图生视频模型后再生成。");
     }
@@ -478,13 +479,21 @@ async function createArkSeedanceVideoRequestBody(config: AiConfig, model: string
         input.firstFrame ? imageToAgnesReference(input.firstFrame) : "",
         input.lastFrame ? imageToAgnesReference(input.lastFrame) : "",
     ]);
-    const videos = input.videoReferences.map((item) => item.url).filter(Boolean);
-    const audios = input.audioReferences.map((item) => item.url).filter(Boolean);
+    const mediaURL = async (reference: ReferenceVideo | ReferenceAudio) => {
+        if (reference.url.startsWith("asset://")) return reference.url;
+        const url = publicHttpUrl(await resolveMediaUrl(reference.storageKey, reference.url));
+        if (!url) throw new VideoRequestError("Seedance 参考视频和音频需要可公开访问的网络地址");
+        return url;
+    };
+    const [videos, audios] = await Promise.all([
+        Promise.all(input.videoReferences.map(mediaURL)),
+        Promise.all(input.audioReferences.map(mediaURL)),
+    ]);
     return {
         model,
         prompt,
         seconds: normalizeSeedanceDuration(config.videoSeconds, modelKey(model).includes("seedance-2-5") ? 30 : 15),
-        size: normalizeSeedanceRatio(config.size),
+        size: firstFrame && modelKey(model).includes("seedance-2-5") ? "adaptive" : normalizeSeedanceRatio(config.size),
         resolution_name: normalizeVideoResolution(config.vquality),
         video_generate_audio: boolConfig(config.videoGenerateAudio, false),
         video_watermark: boolConfig(config.videoWatermark, false),

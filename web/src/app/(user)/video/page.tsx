@@ -19,6 +19,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { isMiniMaxH3Config } from "@/lib/minimax-video";
 import { ARK_SEEDANCE_REFERENCE_LIMITS, boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { omniReferenceLimits, selectVideoReferenceMode } from "@/lib/video-reference-mode";
 import { COGVIDEOX3_DURATIONS, isAgnesVideoV25Model, isCogVideoX3Model, isFalKlingV21MasterModel, modelKey, normalizeCogVideoX3Duration, normalizeFalKlingV21Duration, supportsVideoAudioGeneration, supportsVideoFrameReferences, videoModelProfile } from "@/lib/video-model-capabilities";
 import { deleteStoredMedia, downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer } from "@/services/file-storage";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -98,7 +99,7 @@ type GenerationLog = {
     lastPolledAt?: number;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "channelMode" | "activeChannelId" | "videoChannelId" | "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoMultiShot" | "videoShotType" | "videoMultiPrompt" | "videoElementList" | "videoGenerateAudio" | "videoWatermark" | "videoCharacterOrientation">;
+type GenerationLogConfig = Pick<AiConfig, "channelMode" | "activeChannelId" | "videoChannelId" | "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoMode" | "videoReferenceMode" | "videoNegativePrompt" | "videoMultiShot" | "videoShotType" | "videoMultiPrompt" | "videoElementList" | "videoGenerateAudio" | "videoWatermark" | "videoCharacterOrientation">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 type WorkbenchLayout = "side" | "bottom";
@@ -590,6 +591,17 @@ export default function VideoPage() {
             if (!token) { message.error("工作流生成需要先登录"); return null; }
             return { text, model: modelValue, config: { ...configValue, videoNegativePrompt: currentNegativePrompt }, references: [...referenceItems], firstFrame: firstFrameItem, lastFrame: lastFrameItem, videoReferences: [...videoReferenceItems], audioReferences: [...audioReferenceItems], taskCount: normalizeVideoCount(taskCountValue), workflowRef };
         }
+        try {
+            const selected = selectVideoReferenceMode({ ...configValue, model: modelValue, videoModel: modelValue }, { references: referenceItems, firstFrame: firstFrameItem, lastFrame: lastFrameItem, videoReferences: videoReferenceItems, audioReferences: audioReferenceItems });
+            referenceItems = selected.references;
+            firstFrameItem = selected.firstFrame;
+            lastFrameItem = selected.lastFrame;
+            videoReferenceItems = selected.videoReferences;
+            audioReferenceItems = selected.audioReferences;
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考素材配置无效");
+            return null;
+        }
         const klingV26 = isAPIMartKlingV26Config(configValue, modelValue);
         const klingV3 = isKlingV3Config(configValue, modelValue);
         const kling = klingV26 || klingV3;
@@ -779,6 +791,7 @@ export default function VideoPage() {
         if (result.config.vquality) updateConfig("vquality", result.config.vquality);
         if (result.config.videoSeconds) updateConfig("videoSeconds", result.config.videoSeconds);
         if (result.config.videoMode) updateConfig("videoMode", result.config.videoMode);
+        updateConfig("videoReferenceMode", result.config.videoReferenceMode);
         updateConfig("videoMultiShot", result.config.videoMultiShot || "false");
         updateConfig("videoShotType", result.config.videoShotType || "intelligence");
         updateConfig("videoMultiPrompt", normalizeKlingMultiPrompts(result.config.videoMultiPrompt));
@@ -1114,6 +1127,7 @@ export default function VideoPage() {
         if (log.config.vquality) updateConfig("vquality", log.config.vquality);
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
+        updateConfig("videoReferenceMode", log.config.videoReferenceMode);
         updateConfig("videoMultiShot", log.config.videoMultiShot || "false");
         updateConfig("videoShotType", log.config.videoShotType || "intelligence");
         updateConfig("videoMultiPrompt", normalizeKlingMultiPrompts(log.config.videoMultiPrompt));
@@ -1461,7 +1475,10 @@ function WorkbenchPanel({
     bottomSettingsCollapsed?: boolean;
     setBottomSettingsCollapsed?: (value: boolean) => void;
 }) {
-    const frameReferencesEnabled = Boolean(config.videoWorkflowRef) || supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model }));
+    const omniLimits = omniReferenceLimits({ ...config, model, videoModel: model });
+    const referenceMode = config.videoReferenceMode || (firstFrame || lastFrame ? "frames" : "omni");
+    const referenceModeControl = omniLimits ? <div className="space-y-2"><div className="text-xs opacity-65">生成方式</div><div className="flex gap-2">{(["frames", "omni"] as const).map((mode) => <Button key={mode} type={referenceMode === mode ? "primary" : "default"} onClick={() => updateConfig("videoReferenceMode", mode)}>{mode === "omni" ? "全能参考" : "首尾帧"}</Button>)}</div><div className="text-xs opacity-65">{referenceMode === "omni" ? `最多 ${omniLimits.images} 张图片、${omniLimits.videos} 个视频、${omniLimits.audios} 个音频；首尾帧不参与生成。` : "指定首帧后生成；普通参考素材不参与生成。"}</div></div> : null;
+    const frameReferencesEnabled = (!omniLimits || referenceMode === "frames") && (Boolean(config.videoWorkflowRef) || supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model })));
     const referenceLimits = !config.videoWorkflowRef && channelProtocolForConfig({ ...config, model, videoModel: model }) === "ark" && modelKey(model).includes("seedance-2-5") ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
     const autodl = !config.videoWorkflowRef && isAutoDLConfig(config, model);
     const { data: autodlWorkflow } = useAutoDLWorkflow(config, model);
@@ -1540,6 +1557,7 @@ function WorkbenchPanel({
                                 </Button>
                             </div>
                         </div>
+                        {referenceModeControl}
                         {klingBottom && klingBottomProvider !== "kie" ? (
                             <Input.TextArea
                                 value={negativePrompt}
@@ -1602,11 +1620,13 @@ function WorkbenchPanel({
                         <Input.TextArea value={prompt} onChange={(event) => onPromptChange(event.target.value)} rows={6} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
                     </div>
                 </WorkbenchSection>
+                {referenceModeControl}
                 {frameReferencesEnabled ? (
                     <WorkbenchSection title="首尾帧" count={[firstFrame, lastFrame].filter(Boolean).length}>
                         <FrameReferenceStrip firstFrame={firstFrame} lastFrame={lastFrame} onPasteFrame={onPasteFrame} onUploadFrame={onUploadFrame} onOpenAssetPicker={onOpenAssetPicker} onRemoveFrame={onRemoveFrame} />
                     </WorkbenchSection>
                 ) : null}
+                {!omniLimits || referenceMode === "omni" ? <>
                 <WorkbenchSection title="参考图" count={references.length}>
                     <div className="space-y-2">
                         <div className="flex flex-wrap gap-1">
@@ -1637,6 +1657,7 @@ function WorkbenchPanel({
                         <ReferenceAudioStrip references={audioReferences} maxCount={referenceLimits.audios} onRemoveReference={onRemoveAudioReference} onMoveReference={onMoveAudioReference} />
                     </div>
                 </WorkbenchSection>
+                </> : null}
                 {motionControl ? <CharacterOrientationSetting value={config.videoCharacterOrientation} onChange={(value) => updateConfig("videoCharacterOrientation", value)} /> : null}
                 <GenerationSettings config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 <WorkbenchSection title="任务数量">
@@ -2241,6 +2262,7 @@ function buildDisplayConfig(config: AiConfig, model: string): GenerationLogConfi
         vquality: normalizeResolution(config.vquality),
         videoSeconds: config.videoSeconds,
         videoMode: config.videoMode,
+        videoReferenceMode: config.videoReferenceMode,
         videoNegativePrompt: config.videoNegativePrompt,
         videoMultiShot: config.videoMultiShot,
         videoShotType: config.videoShotType,
@@ -2856,6 +2878,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         vquality: normalizeResolution(log.config?.vquality || log.resolution || ""),
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
         videoMode: log.config?.videoMode || "std",
+        videoReferenceMode: log.config?.videoReferenceMode,
         videoNegativePrompt: log.config?.videoNegativePrompt || "",
         videoMultiShot: log.config?.videoMultiShot || "false",
         videoShotType: log.config?.videoShotType || "intelligence",
@@ -2878,6 +2901,7 @@ function buildLog({ prompt, model, config, references, firstFrame, lastFrame, vi
         vquality: normalizeResolution(config.vquality),
         videoSeconds: config.videoSeconds,
         videoMode: config.videoMode,
+        videoReferenceMode: config.videoReferenceMode,
         videoNegativePrompt: config.videoNegativePrompt,
         videoMultiShot: config.videoMultiShot,
         videoShotType: config.videoShotType,

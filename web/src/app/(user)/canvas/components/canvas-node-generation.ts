@@ -255,6 +255,7 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
 }
 
 function readFrameReferences(node: CanvasNodeData | undefined, inputs: NodeGenerationInput[]) {
+    if (node?.metadata?.videoReferenceMode === "omni") return { firstFrame: null, lastFrame: null };
     const imageByNodeId = new Map(inputs.filter((input) => input.image).map((input) => [input.nodeId, input.image as ReferenceImage]));
     return {
         firstFrame: node?.metadata?.firstFrameNodeId ? imageByNodeId.get(node.metadata.firstFrameNodeId) || null : null,
