@@ -7,6 +7,31 @@ import (
 	"time"
 )
 
+func SaveFailedTranslatedVideoTask(task model.VideoTask, refundLog model.CreditLog) error {
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		updated := tx.Model(&model.VideoTask{}).Where("id = ? AND status NOT IN ?", task.ID, []string{"completed", "failed", "cancelled", "canceled"}).Select("*").Updates(&task)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 || refundLog.Amount <= 0 {
+			return nil
+		}
+		user, found, err := refundUserCredits(tx, task.UserID, refundLog.Amount, refundLog.CreatedAt)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return gorm.ErrRecordNotFound
+		}
+		refundLog.Balance = user.Credits
+		return tx.Create(&refundLog).Error
+	})
+}
+
 func SaveVideoTask(task model.VideoTask) (model.VideoTask, error) {
 	db, err := DB()
 	if err != nil {

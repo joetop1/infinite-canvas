@@ -18,6 +18,7 @@ var ErrVideoTaskKeyConflict = errors.New("同一个视频任务编号对应了�
 
 // VideoSubmission is the provider-specific outcome normalized by the adapter.
 type VideoSubmission struct {
+	ParameterTranslationSnapshot string
 	UpstreamTaskID, UpstreamVideoID  string
 	Status                           string
 	Progress                         int
@@ -27,6 +28,7 @@ type VideoSubmission struct {
 }
 
 type VideoGenerationInput struct {
+	ParameterTranslationSnapshot string
 	UserID, UserDisplayName, Model, ChannelID, UserChannelID, ChannelName string
 	Source, SourceID, ClientTaskID, Fingerprint                           string
 	Seconds, Size, RequestBody, BillingPath                               string
@@ -62,6 +64,7 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	task := model.VideoTask{
 		ID: id, ClientTaskID: input.ClientTaskID, RequestFingerprint: input.Fingerprint,
+		ParameterTranslationSnapshot: input.ParameterTranslationSnapshot,
 		UserID: input.UserID, UserDisplayName: input.UserDisplayName, Model: input.Model,
 		ChannelID: input.ChannelID, UserChannelID: input.UserChannelID, ChannelName: input.ChannelName,
 		Source: normalizeVideoTaskSource(input.Source), SourceID: strings.TrimSpace(input.SourceID),
@@ -86,6 +89,9 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 	requestCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
 	result, submitErr := submit(requestCtx)
+	if result.ParameterTranslationSnapshot != "" {
+		task.ParameterTranslationSnapshot = result.ParameterTranslationSnapshot
+	}
 	task.UpstreamTaskID, task.UpstreamVideoID = strings.TrimSpace(result.UpstreamTaskID), strings.TrimSpace(result.UpstreamVideoID)
 	task.Progress, task.Seconds, task.Size = clampProgress(result.Progress), firstVideoTaskValue(result.Seconds, task.Seconds), firstVideoTaskValue(result.Size, task.Size)
 	task.VideoURL, task.ResponseBody = strings.TrimSpace(result.VideoURL), result.ResponseBody

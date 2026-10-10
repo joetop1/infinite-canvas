@@ -5,6 +5,7 @@ import { autodlDirectProtocol } from "./autodl";
 import { falDirectProtocol } from "./fal";
 import { kieDirectProtocol } from "./kie";
 import { replicateDirectProtocol } from "./replicate";
+import { tokenDanceDirectProtocol } from "./tokendance";
 import type { DirectProtocolAdapter } from "./types";
 
 export const directProtocolAdapters: Readonly<Record<DirectAIProvider, DirectProtocolAdapter>> = {
@@ -14,4 +15,5 @@ export const directProtocolAdapters: Readonly<Record<DirectAIProvider, DirectPro
     ark: arkDirectProtocol,
     fal: falDirectProtocol,
     replicate: replicateDirectProtocol,
+    tokendance: tokenDanceDirectProtocol,
 };

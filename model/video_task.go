@@ -50,4 +50,5 @@ type VideoTask struct {
 	StartedAt          string  `json:"startedAt"`
 	CompletedAt        string  `json:"completedAt"`
 	LastPolledAt       string  `json:"lastPolledAt" gorm:"index"`
+	ParameterTranslationSnapshot string `json:"-" gorm:"type:text"`
 }

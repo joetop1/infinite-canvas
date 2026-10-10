@@ -151,6 +151,9 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		credits *= float64(readAIRequestCount(body, contentType, false))
 	}
+	if serveParameterTranslation(w, r, body, path, channel, user, credits, startedAt) {
+		return
+	}
 	upstreamPath := resolveAIProxyPath(channel, modelName, path)
 	prepared, _, err := prepareAIProtocolRequest(aiProtocolRequest{
 		mode: aiProtocolProxyRequest, body: body, contentType: contentType, modelName: modelName,
@@ -220,6 +223,7 @@ type aiLogContext struct {
 	UserDisplayName string
 	Credits         float64
 	RequestBody     string
+	OutcomeKnown    bool
 }
 
 func copyAIResponse(w http.ResponseWriter, request *http.Request, channel model.ModelChannel, logContext aiLogContext, onFailure func()) {
@@ -242,7 +246,11 @@ func copyAIResponse(w http.ResponseWriter, request *http.Request, channel model.
 			onFailure()
 		}
 		saveAIProxyLog(logContext, response.StatusCode, string(payload), strings.TrimSpace(string(payload)))
-		Fail(w, readUpstreamAIErrorMessage(payload, response.StatusCode))
+		message := readUpstreamAIErrorMessage(payload, response.StatusCode)
+		if service.IsTokenDanceChannel(channel) {
+			message = firstNonEmpty(service.TokenDanceRecoveryMessage(response.Header.Get("TokenDance-Recovery-Action")), message)
+		}
+		Fail(w, message)
 		return
 	}
 
@@ -311,6 +319,7 @@ func saveAIProxyLog(context aiLogContext, status int, responseBody string, error
 		RequestBody:     context.RequestBody,
 		ResponseBody:    responseBody,
 		Error:           errorMessage,
+		OutcomeKnown:    context.OutcomeKnown,
 	})
 }
 

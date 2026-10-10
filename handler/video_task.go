@@ -86,8 +86,19 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		credits *= float64(readAIRequestCount(body, contentType, true))
 	}
+	if serveParameterTranslationVideo(w, r, body, channel, userChannelID, user, credits, startedAt) {
+		return
+	}
 	upstreamPath := resolveAIProxyPath(channel, modelName, "/videos")
-	body, contentType, err = normalizeVideoCreateBody(body, contentType, modelName, channel, upstreamPath)
+	if service.IsTokenDanceChannel(channel) {
+		prepared, _, prepareErr := prepareAIProtocolRequest(aiProtocolRequest{
+			mode: aiProtocolVideoRequest, body: body, contentType: contentType, modelName: modelName,
+			channel: channel, endpoint: "/videos", path: upstreamPath,
+		})
+		body, contentType, upstreamPath, err = prepared.body, prepared.contentType, prepared.path, prepareErr
+	} else {
+		body, contentType, err = normalizeVideoCreateBody(body, contentType, modelName, channel, upstreamPath)
+	}
 	if err != nil {
 		log.Printf("AI video normalize request failed: model=%s err=%v", modelName, err)
 		// [CUSTOM] Fal / Replicate 的转译错误包含可操作的参数校验信息。
@@ -275,6 +286,18 @@ func pollVideoTaskFromUpstream(task model.VideoTask) (service.VideoTaskPollUpdat
 	if err != nil {
 		return service.VideoTaskPollUpdate{}, err
 	}
+	if task.ParameterTranslationSnapshot != "" {
+		update, err := service.PollParameterTranslationVideo(task, channel)
+		if err != nil || service.IsCompletedVideoTaskStatus(update.Status) || service.IsFailedVideoTaskStatus(update.Status) {
+			startedAt, _ := time.Parse(time.RFC3339Nano, task.CreatedAt)
+			message := firstNonEmpty(update.Error, update.ErrorDetail)
+			if err != nil {
+				message = err.Error()
+			}
+			saveAIProxyLog(aiLogContext{StartedAt: startedAt, OutcomeKnown: true, Endpoint: "/videos/" + task.ID, Method: http.MethodGet, Model: task.Model, Channel: channel, UserID: task.UserID, UserDisplayName: task.UserDisplayName, RequestBody: fmt.Sprintf(`{"taskId":%q}`, task.ID)}, update.StatusCode, update.ResponseBody, message)
+		}
+		return update, err
+	}
 	pollID := firstNonEmpty(task.UpstreamTaskID, task.ID)
 	if isAIProtocolVideoID(task.Model, task.UpstreamVideoID) {
 		pollID = task.UpstreamVideoID
@@ -363,6 +386,11 @@ func doAIRequest(request *http.Request, channel model.ModelChannel) ([]byte, int
 	}
 	defer response.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(response.Body, 1024*1024))
+	if response.StatusCode >= http.StatusBadRequest && service.IsTokenDanceChannel(channel) {
+		if message := service.TokenDanceRecoveryMessage(response.Header.Get("TokenDance-Recovery-Action")); message != "" {
+			payload, _ = json.Marshal(map[string]any{"error": map[string]any{"message": message}})
+		}
+	}
 	return payload, response.StatusCode, nil
 }
 

@@ -7,9 +7,10 @@ test("built-in protocol options retain both settings panels' labels and order", 
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
         { label: "Grok2API", value: "grok2api" },
-        { label: "MiniMax & METASO", value: "metaso" },
+        { label: "MiniMax & METASO", value: "minimax" },
         { label: "APIMart", value: "apimart" },
         { label: "88API", value: "88api" },
+        { label: "TokenDance", value: "tokendance" },
         { label: "RunningHub", value: "runninghub" },
         { label: "ComfyUI", value: "comfyui" },
         { label: "AutoDL", value: "autodl" },
@@ -26,7 +27,7 @@ test("built-in protocols retain all existing default URLs and API Key links", ()
         openai: "https://api.openai.com",
         gemini: "https://generativelanguage.googleapis.com",
         grok2api: "",
-        metaso: "https://metaso.cn/api/minimax",
+        minimax: "https://metaso.cn/api/minimax",
         apimart: "https://api.apimart.ai/v1",
         runninghub: "https://www.runninghub.cn",
         comfyui: "",
@@ -37,9 +38,10 @@ test("built-in protocols retain all existing default URLs and API Key links", ()
         kie: "https://api.kie.ai/api/v1",
         mimo: "https://api.xiaomimimo.com",
         "88api": "https://88api.ai/v1",
+        tokendance: "https://tokendance.space/gateway/v1",
     });
     assert.deepEqual(modelChannelApiKeyUrls, {
-        metaso: "https://metaso.cn/minimax-h3/?s=tt",
+        minimax: "https://metaso.cn/minimax-h3/?s=tt",
         apimart: "https://apimart.ai/register?aff=fWMrEv",
         fal: "https://fal.ai/dashboard/keys",
         replicate: "https://replicate.com/account/api-tokens",
@@ -55,6 +57,7 @@ test("public parameter translation eligibility keeps exact protocol matching", (
     assert.equal(directAIProviderForProtocol("ark"), "ark");
     assert.equal(directAIProviderForProtocol("fal"), "fal");
     assert.equal(directAIProviderForProtocol("replicate"), "replicate");
+    assert.equal(directAIProviderForProtocol("tokendance"), "tokendance");
     for (const protocol of ["openai", "gemini", "grok2api", "metaso", "mimo", "88api", "KIE", " kie ", "APIMart", "ARK", " ark ", "FAL", " fal ", "Replicate", "", "unknown"]) {
         assert.equal(directAIProviderForProtocol(protocol), null, protocol);
     }

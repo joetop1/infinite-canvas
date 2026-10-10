@@ -9,7 +9,7 @@ import { VideoSettingsPanel, isAPIMartKlingMotionControlConfig, isKIEKlingMotion
 import { isAutoDLConfig } from "@/lib/autodl";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { omniReferenceLimits } from "@/lib/video-reference-mode";
-import { supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
+import { modelKey, supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { channelProtocolForConfig, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeMetadata } from "../types";
@@ -94,7 +94,7 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
     const isAPIMartKlingV3 = isAPIMartKlingV3Config(config, model);
     const isKIEKlingV3 = isKIEKlingV3Config(config, model);
     const kieKlingOmni = kieKlingOmniVariant(config, model);
-    const isKlingMotionControl = isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model);
+    const isKlingMotionControl = isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model) || (channelProtocolForConfig({ ...config, model, videoModel: model }) === "tokendance" && modelKey(model) === "kling-3-0");
     const isKlingV3 = isAPIMartKlingV3 || isKIEKlingV3;
     const frameReferencesEnabled = !isKlingV3 && supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model }));
     const omniLimits = !visualOnly && onMetadataChange ? omniReferenceLimits(config) : null;

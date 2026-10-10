@@ -97,6 +97,7 @@ export type CanvasNodeMetadata = {
     videoTaskPhase?: string;
     videoTaskVideoId?: string;
     videoReferenceMode?: "omni" | "frames";
+    videoTaskTranslation?: import("@/services/api/video").VideoResponse["translationSnapshot"];
     firstFrameNodeId?: string;
     lastFrameNodeId?: string;
     multiShot?: string;

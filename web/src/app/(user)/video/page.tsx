@@ -116,7 +116,7 @@ export default function VideoPage() {
     const lastFrameInputRef = useRef<HTMLInputElement>(null);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const videoConfig = useMemo(() => ({ ...effectiveConfig, size: effectiveConfig.videoSize }), [effectiveConfig]);
+    const videoConfig = useMemo(() => ({ ...effectiveConfig, activeChannelId: effectiveConfig.videoChannelId || effectiveConfig.activeChannelId, size: effectiveConfig.videoSize }), [effectiveConfig]);
     const updateVideoConfig = useCallback<UpdateAiConfig>((key, value) => {
         if (key === "size") {
             updateConfig("videoSize", String(value));
@@ -159,7 +159,7 @@ export default function VideoPage() {
     const workflowSubmissionRef = useRef(0);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
-    const referenceLimits = !videoConfig.videoWorkflowRef && channelProtocolForConfig({ ...videoConfig, model, videoModel: model }) === "ark" && modelKey(model).includes("seedance-2-5") ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
+    const referenceLimits = !videoConfig.videoWorkflowRef && channelProtocolForConfig({ ...videoConfig, model, videoModel: model }) === "ark" && (modelKey(model).includes("seedance-2-5") || modelKey(model).includes("seedance2-5")) ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
     const autodl = !videoConfig.videoWorkflowRef && isAutoDLConfig(videoConfig, model);
     const { data: autodlWorkflow, error: autodlError } = useAutoDLWorkflow(videoConfig, model);
     const autodlCapabilities = getAutoDLCapabilities(autodlWorkflow);
@@ -651,7 +651,7 @@ export default function VideoPage() {
             }
         }
         if (!kling && !isAutoDLConfig(configValue, modelValue) && !isMiniMaxH3Config(configValue, modelValue) && !isAgnesVideoV25Model(modelValue)) {
-            const limits = channelProtocolForConfig({ ...configValue, model: modelValue, videoModel: modelValue }) === "ark" && modelKey(modelValue).includes("seedance-2-5") ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
+            const limits = channelProtocolForConfig({ ...configValue, model: modelValue, videoModel: modelValue }) === "ark" && (modelKey(modelValue).includes("seedance-2-5") || modelKey(modelValue).includes("seedance2-5")) ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
             const videoReferenceError = seedanceVideoReferenceError(videoReferenceItems, limits);
             if (videoReferenceError) {
                 message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
@@ -1479,7 +1479,7 @@ function WorkbenchPanel({
     const referenceMode = config.videoReferenceMode || (firstFrame || lastFrame ? "frames" : "omni");
     const referenceModeControl = omniLimits ? <div className="space-y-2"><div className="text-xs opacity-65">生成方式</div><div className="flex gap-2">{(["frames", "omni"] as const).map((mode) => <Button key={mode} type={referenceMode === mode ? "primary" : "default"} onClick={() => updateConfig("videoReferenceMode", mode)}>{mode === "omni" ? "全能参考" : "首尾帧"}</Button>)}</div><div className="text-xs opacity-65">{referenceMode === "omni" ? `最多 ${omniLimits.images} 张图片、${omniLimits.videos} 个视频、${omniLimits.audios} 个音频；首尾帧不参与生成。` : "指定首帧后生成；普通参考素材不参与生成。"}</div></div> : null;
     const frameReferencesEnabled = (!omniLimits || referenceMode === "frames") && (Boolean(config.videoWorkflowRef) || supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model })));
-    const referenceLimits = !config.videoWorkflowRef && channelProtocolForConfig({ ...config, model, videoModel: model }) === "ark" && modelKey(model).includes("seedance-2-5") ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
+    const referenceLimits = !config.videoWorkflowRef && channelProtocolForConfig({ ...config, model, videoModel: model }) === "ark" && (modelKey(model).includes("seedance-2-5") || modelKey(model).includes("seedance2-5")) ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
     const autodl = !config.videoWorkflowRef && isAutoDLConfig(config, model);
     const { data: autodlWorkflow } = useAutoDLWorkflow(config, model);
     const cogVideoX3 = !config.videoWorkflowRef && isCogVideoX3Model(model);
@@ -1494,7 +1494,7 @@ function WorkbenchPanel({
     const klingBottomProvider = klingBottomConfig?.provider || "apimart";
     const klingBottom = Boolean(klingBottomConfig);
     const showAudioSwitch = klingBottom || audioGenerationEnabled;
-    const motionControl = !config.videoWorkflowRef && (isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model));
+    const motionControl = !config.videoWorkflowRef && (isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model) || (videoChannelProtocol(config, model) === "tokendance" && modelKey(model) === "kling-3-0"));
     const bottomSettingsGridClass = motionControl
         ? showAudioSwitch ? "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.8fr_0.8fr_0.7fr_auto_auto]" : "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.8fr_0.7fr_auto_auto]"
         : showAudioSwitch ? "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.8fr_0.7fr_auto_auto]" : "lg:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_0.7fr_auto_auto]";
@@ -2459,7 +2459,8 @@ function mergeBackendTaskIntoLog(existing: GenerationLog | undefined, incoming: 
 
 function parseBackendVideoRequest(value?: string) {
     const parsed = parseJsonRecord(value);
-    const fields = parseRecord(parsed.fields);
+    const variables = parseRecord(parseRecord(parsed._parameterTranslation)?.variables);
+    const fields = variables ? { ...variables, resolution_name: variables.resolution, negative_prompt: variables.negativePrompt } : parseRecord(parsed.fields);
     const pick = (...keys: string[]) => {
         for (const key of keys) {
             const source = fields && key in fields ? fields[key] : parsed[key];
@@ -2940,6 +2941,8 @@ function buildLog({ prompt, model, config, references, firstFrame, lastFrame, vi
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+    const videoChannelId = resolveVideoChannelId(config, model, config.videoChannelId, config.activeChannelId);
+    config = { ...config, videoChannelId: videoChannelId || config.videoChannelId, activeChannelId: videoChannelId || config.activeChannelId };
     if (isAutoDLConfig(config, model)) return { ...config, model, videoModel: model, activeChannelId: config.videoChannelId || config.activeChannelId };
     const seedance = isSeedanceVideoConfig({ ...config, model });
     const cogVideoX3 = isCogVideoX3Model(model);
@@ -2950,7 +2953,6 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
     const kieKlingOmni = kieKlingOmniVariant(config, model);
     const klingV3 = apimartKlingV3 || kieKlingV3;
     const kling = klingV26 || klingV3;
-    const videoChannelId = resolveVideoChannelId(config, model, config.videoChannelId, config.activeChannelId);
     const videoMode = klingV3 && config.videoMode === "4k" ? "4k" : config.videoMode === "pro" ? "pro" : "std";
     return {
         ...config,
