@@ -10,7 +10,7 @@ import { boolConfig, isSeedanceFastOrMiniModel, isSeedanceVideoConfig, normalize
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { COGVIDEOX3_DURATIONS, isCogVideoX3Model, isFalKlingV21MasterModel, modelKey, normalizeCogVideoX3Duration, normalizeFalKlingV21Duration, supportsVideoAudioGeneration, videoModelProfile } from "@/lib/video-model-capabilities";
 import { grokVideoModeOptions, isAPIMartKlingV26Config, isAPIMartKlingV3Config, isKIEGrokVideoModel, isKIEKlingV3Config, klingV26DurationOptions, klingV26ModeOptions, klingV26RatioLabels, klingV26RatioOptions, klingV3DurationOptions, klingV3ModeOptions, normalizeKlingV26Duration, normalizeKlingV26Ratio, normalizeKlingV3Duration } from "@/services/api/protocols/kling-models";
-import { type AiConfig } from "@/stores/use-config-store";
+import { channelProtocolForConfig, type AiConfig } from "@/stores/use-config-store";
 
 export { isAPIMartKlingV26Config, isAPIMartKlingV3Config, isAPIMartKlingMotionControlConfig, isKIEKlingV3Config, kieKlingOmniVariant, isKIEKlingMotionControlConfig, isKIEGrokVideoModel } from "@/services/api/protocols/kling-models";
 
