@@ -71,7 +71,7 @@ func TestModelProtocolChannelFlow(t *testing.T) {
 		{name: "Gemini video error response", protocol: "gemini", modelName: "veo", endpoint: "/videos", body: `{"model":"veo","contents":[]}`, path: "/v1beta/models/veo:predictLongRunning", wantBody: `{"contents":[]}`, payload: `{"name":"operations/job"}`, message: `{"message":""}`},
 		{name: "KIE business error response", protocol: "kie", endpoint: "/videos", path: "/v1/jobs/createTask", wantBody: `{"model":"future-model","input":{}}`, payload: `{"code":400,"msg":"rejected"}`, message: "rejected"},
 		{name: "OpenAI chat", protocol: "openai", endpoint: "/chat/completions", body: `{"model":"future-model","messages":[]}`, path: "/v1/chat/completions", payload: `{"choices":[]}`},
-		{name: "88API video", protocol: "88api", endpoint: "/videos", body: `{"model":"future-model","prompt":"scene"}`, path: "/v1/videos", payload: `{"id":"upstream-job","status":"processing"}`},
+		{name: "OpenAI video", protocol: "openai", endpoint: "/videos", body: `{"model":"future-model","prompt":"scene"}`, path: "/v1/videos", payload: `{"id":"upstream-job","status":"processing"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestModelProtocolChannelFlow(t *testing.T) {
 					if err != nil || !found {
 						t.Fatalf("task unavailable for poll: %v", err)
 					}
-					update, err := pollVideoTaskFromUpstream(task)
+					update, err := pollVideoTaskFromUpstream(context.Background(), task)
 					if err != nil || update.Status != "completed" || update.VideoURL != "https://media.invalid/video" {
 						t.Fatalf("poll response: %#v, %v", update, err)
 					}

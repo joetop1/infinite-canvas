@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -169,9 +170,15 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		Fail(w, message)
 		return
 	}
+	ctx := context.Background()
+	if r.Header.Get("X-Canvas-Node-Request") == "true" {
+		ctx = r.Context()
+	}
+	if ctx.Err() != nil {
+		return
+	}
 	body, contentType, upstreamPath = prepared.body, prepared.contentType, prepared.path
-	// [CUSTOM] 图片队列轮询沿用客户端请求上下文，连接断开后及时停止。
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
 	if err != nil {
 		log.Printf("AI proxy build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, upstreamPath), err)
 		Fail(w, "AI 接口请求失败")
@@ -198,7 +205,7 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		Credits:         credits,
 		RequestBody:     summarizeAIRequest(body, contentType),
 	}, func() {
-		if credits > 0 {
+		if credits > 0 && ctx.Err() == nil {
 			if err := service.RefundUserCredits(user.ID, modelName, credits, upstreamPath); err != nil {
 				log.Printf("AI proxy refund credits failed: user=%s model=%s credits=%g err=%v", user.ID, modelName, credits, err)
 			}

@@ -335,7 +335,7 @@ func (translation *ParameterTranslation) Snapshot(input ParameterTranslationInpu
 	return string(encoded)
 }
 
-func PollParameterTranslationVideo(task model.VideoTask, channel model.ModelChannel) (VideoTaskPollUpdate, error) {
+func PollParameterTranslationVideo(ctx context.Context, task model.VideoTask, channel model.ModelChannel) (VideoTaskPollUpdate, error) {
 	var snapshot parameterTranslationSnapshot
 	if json.Unmarshal([]byte(task.ParameterTranslationSnapshot), &snapshot) != nil || len(snapshot.TaskIDs) == 0 {
 		return VideoTaskPollUpdate{}, errors.New("视频任务自定义查询快照无效")
@@ -356,7 +356,7 @@ func PollParameterTranslationVideo(task model.VideoTask, channel model.ModelChan
 	for _, id := range snapshot.TaskIDs {
 		result, done := snapshot.Completed[id]
 		if !done {
-			result, err = translation.Send(context.Background(), "video", true, id)
+			result, err = translation.Send(ctx, "video", true, id)
 			if err != nil {
 				if result.Status == "failed" {
 					return VideoTaskPollUpdate{Status: "failed", Error: err.Error(), ErrorDetail: err.Error(), ResponseBody: result.ResponseBody, StatusCode: result.StatusCode}, nil

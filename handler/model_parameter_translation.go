@@ -70,6 +70,9 @@ func serveParameterTranslation(w http.ResponseWriter, r *http.Request, body []by
 		Fail(w, "当前渠道没有该模型的自定义配置，请刷新渠道设置")
 		return true
 	}
+	if r.Header.Get("X-Canvas-Node-Request") == "true" && r.Context().Err() != nil {
+		return true
+	}
 	if credits > 0 {
 		if err := service.ConsumeUserCredits(user.ID, request.Model, credits, path); err != nil {
 			FailError(w, err)
@@ -81,7 +84,7 @@ func serveParameterTranslation(w http.ResponseWriter, r *http.Request, body []by
 	result, err := translation.Execute(r.Context(), input.Kind, onProgress)
 	logContext = parameterTranslationLog(logContext, translation)
 	if err != nil {
-		if credits > 0 {
+		if credits > 0 && (r.Header.Get("X-Canvas-Node-Request") != "true" || r.Context().Err() == nil) {
 			_ = service.RefundUserCredits(user.ID, request.Model, credits, path)
 		}
 		saveAIProxyLog(logContext, result.StatusCode, result.ResponseBody, err.Error())

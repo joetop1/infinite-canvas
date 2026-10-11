@@ -2,9 +2,11 @@ package repository
 
 import (
 	"errors"
+	"time"
+
 	"github.com/tigerowo/infinite-canvas/model"
 	"gorm.io/gorm"
-	"time"
+	"gorm.io/gorm/clause"
 )
 
 func SaveFailedTranslatedVideoTask(task model.VideoTask, refundLog model.CreditLog) error {
@@ -37,7 +39,24 @@ func SaveVideoTask(task model.VideoTask) (model.VideoTask, error) {
 	if err != nil {
 		return task, err
 	}
-	return task, db.Save(&task).Error
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&task).Error; err != nil {
+		return task, err
+	}
+	update := db.Model(&model.VideoTask{}).Where("user_id = ? AND id = ? AND status <> ?", task.UserID, task.ID, "cancelled").Select("*").Updates(&task)
+	if update.Error == nil && update.RowsAffected == 0 {
+		update = db.First(&task, "user_id = ? AND id = ?", task.UserID, task.ID)
+	}
+	return task, update.Error
+}
+
+func UpdateVideoTask(task model.VideoTask) error {
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Model(&model.VideoTask{}).
+		Where("id = ? AND status <> ?", task.ID, "cancelled").
+		Select("*").Updates(&task).Error
 }
 
 func ReserveVideoTask(task model.VideoTask, log model.CreditLog) error {
@@ -210,8 +229,8 @@ func CommitVideoTask(task model.VideoTask, expectedRevision int64, refund *model
 	}
 	changed := false
 	err = db.Transaction(func(tx *gorm.DB) error {
-		update := tx.Model(&model.VideoTask{}).Where("id = ? AND revision = ?", task.ID, expectedRevision).
-			Select("phase", "revision", "status", "progress", "seconds", "size", "video_url", "error", "error_detail", "upstream_task_id", "upstream_video_id", "response_body", "last_response", "updated_at", "started_at", "completed_at", "last_polled_at", "next_poll_at", "poll_failures", "refunded_at").Updates(&task)
+		update := tx.Model(&model.VideoTask{}).Where("id = ? AND revision = ? AND status <> ?", task.ID, expectedRevision, "cancelled").
+			Select("parameter_translation_snapshot", "phase", "revision", "status", "progress", "seconds", "size", "video_url", "error", "error_detail", "upstream_task_id", "upstream_video_id", "response_body", "last_response", "updated_at", "started_at", "completed_at", "last_polled_at", "next_poll_at", "poll_failures", "refunded_at").Updates(&task)
 		if update.Error != nil || update.RowsAffected == 0 {
 			return update.Error
 		}

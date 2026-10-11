@@ -108,7 +108,7 @@ func TestParameterTranslationChannelFlow(t *testing.T) {
 				}
 				channel.ParameterTranslation = ""
 				_, _ = repository.SaveSettings(model.Settings{Private: model.PrivateSetting{Channels: []model.ModelChannel{channel}}}, "changed")
-				update, err := pollVideoTaskFromUpstream(task)
+				update, err := pollVideoTaskFromUpstream(context.Background(), task)
 				if err != nil || update.VideoURL != "https://media.invalid/video" {
 					t.Fatalf("snapshot poll=%+v err=%v", update, err)
 				}

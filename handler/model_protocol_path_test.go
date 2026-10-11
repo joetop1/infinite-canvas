@@ -39,7 +39,6 @@ func TestModelProtocolProxyPathContract(t *testing.T) {
 		{"openai plan URL unchanged", "openai", "https://api.example/API/PLAN/V3", "deployment-id", "/videos", "/videos"},
 		{"ark create", "ark", "https://ark.cn-beijing.volces.com/api/v3", "doubao-seedance-2.0", "/videos", "/contents/generations/tasks"},
 		{"ark poll", "ark", "https://ark.cn-beijing.volces.com/api/plan/v3", "doubao-seedance-2.0", "/videos/task a?b", "/contents/generations/tasks/task a?b"},
-		{"88api", "88api", "https://88api.ai/v1", "seedance-2.0-mini-720p", "/videos", "/videos"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -49,7 +48,7 @@ func TestModelProtocolProxyPathContract(t *testing.T) {
 			}
 		})
 	}
-	for _, protocol := range []string{"", "openai", "grok2api", "minimax", "mimo", "88api", "future-protocol"} {
+	for _, protocol := range []string{"", "openai", "grok2api", "minimax", "mimo", "future-protocol"} {
 		for _, path := range []string{"/chat/completions", "/responses", "/images/generations", "/images/edits", "/audio/speech", "/videos", "/videos/task", "/models"} {
 			if got := resolveAIProxyPath(model.ModelChannel{Protocol: protocol}, "future-model", path); got != path {
 				t.Errorf("passthrough %q %q: got %q", protocol, path, got)

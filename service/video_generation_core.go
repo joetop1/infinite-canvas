@@ -35,6 +35,11 @@ type VideoGenerationInput struct {
 	Credits                                                               float64
 }
 
+func videoGenerationTaskID(userID, clientTaskID string) string {
+	key := sha256.Sum256([]byte(userID + "\x00" + clientTaskID))
+	return "video-task-" + hex.EncodeToString(key[:])
+}
+
 // SubmitVideoGeneration stores a durable task and reserves credits before invoking
 // a provider. Repeating the client key never repeats the paid provider request.
 func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, submit func(context.Context) (VideoSubmission, error)) (model.VideoTask, bool, error) {
@@ -47,15 +52,14 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 	// records during rollout so a transport retry does not create a second job.
 	if previous, found, err := repository.GetUserVideoTask(input.UserID, input.ClientTaskID); err != nil {
 		return model.VideoTask{}, false, err
-	} else if found && previous.ClientTaskID == input.ClientTaskID && previous.RequestFingerprint == "" {
+	} else if found && (previous.Status == "cancelled" || (previous.ClientTaskID == input.ClientTaskID && previous.RequestFingerprint == "")) {
 		return previous, false, nil
 	}
-	key := sha256.Sum256([]byte(input.UserID + "\x00" + input.ClientTaskID))
-	id := "video-task-" + hex.EncodeToString(key[:])
+	id := videoGenerationTaskID(input.UserID, input.ClientTaskID)
 	if previous, found, err := repository.GetVideoTaskByID(id); err != nil {
 		return model.VideoTask{}, false, err
 	} else if found {
-		if previous.RequestFingerprint != input.Fingerprint {
+		if previous.Status != "cancelled" && previous.RequestFingerprint != input.Fingerprint {
 			return model.VideoTask{}, false, ErrVideoTaskKeyConflict
 		}
 		return previous, false, nil
@@ -77,7 +81,7 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 		Amount: -task.Credits, Remark: "调用模型 " + input.Model, Extra: string(logExtra), CreatedAt: now}
 	if err := repository.ReserveVideoTask(task, creditLog); err != nil {
 		if previous, found, readErr := repository.GetVideoTaskByID(id); readErr == nil && found {
-			if previous.RequestFingerprint != input.Fingerprint {
+			if previous.Status != "cancelled" && previous.RequestFingerprint != input.Fingerprint {
 				return model.VideoTask{}, false, ErrVideoTaskKeyConflict
 			}
 			return previous, false, nil
@@ -85,9 +89,20 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 		return model.VideoTask{}, false, err
 	}
 
-	// A disconnected browser must not cancel an already-reserved provider submission.
+	// Explicit stops cancel submission; a disconnected browser alone does not.
+	stopCtx, cleanup, stopErr := CanvasTaskContext("video", input.UserID, task.ID)
+	if stopErr != nil {
+		if saved, found, err := repository.GetVideoTaskByID(task.ID); err == nil && found && saved.Status == "cancelled" {
+			return saved, true, nil
+		}
+		return task, true, stopErr
+	}
+	defer cleanup()
 	requestCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
+	stopCancel := context.AfterFunc(stopCtx, cancel)
+	defer stopCancel()
+	if stopCtx.Err() != nil { cancel() }
 	result, submitErr := submit(requestCtx)
 	if result.ParameterTranslationSnapshot != "" {
 		task.ParameterTranslationSnapshot = result.ParameterTranslationSnapshot
@@ -125,6 +140,8 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 		switch task.Status {
 		case "completed":
 			task.Phase, task.Progress, task.CompletedAt = model.GenerationCompleted, 100, task.UpdatedAt
+		case "cancelled":
+			task.Phase, task.CompletedAt = "cancelled", task.UpdatedAt
 		case "failed":
 			task.Phase, task.Error, task.CompletedAt = model.GenerationFailed, firstVideoTaskValue(result.Error, result.ErrorDetail, "视频生成失败"), task.UpdatedAt
 		default:

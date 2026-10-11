@@ -148,7 +148,8 @@ export class BrowserParameterTranslation {
     }
     async send(query = false, taskId = "", signal?: AbortSignal): Promise<TranslationResult> {
         const { url, options, responseType } = await this.prepare(query, taskId);
-        signal ||= AbortSignal.timeout(this.match.timeout * 1000);
+        const timeout = AbortSignal.timeout(this.match.timeout * 1000);
+        signal = signal ? AbortSignal.any([signal, timeout]) : timeout;
         const binary = responseType === "blob" || responseType === "arraybuffer";
         let response: Response, blob: Blob | undefined, payload: string | null;
         try {
@@ -213,8 +214,9 @@ export class BrowserParameterTranslation {
         if (result.status === "completed" && !urls.length) throw new Error("生成已完成，但配置的结果位置没有可用媒体地址");
         return { ...result, urls, responseBody: data };
     }
-    async execute(onProgress?: (progress: number) => void): Promise<TranslationResult> {
-        const signal = AbortSignal.timeout(this.match.timeout * 1000);
+    async execute(onProgress?: (progress: number) => void, externalSignal?: AbortSignal): Promise<TranslationResult> {
+        const timeout = AbortSignal.timeout(this.match.timeout * 1000);
+        const signal = externalSignal ? AbortSignal.any([timeout, externalSignal]) : timeout;
         const result = await this.send(false, "", signal);
         if (result.status === "completed") return result;
         const results: Record<string, TranslationResult> = {};
@@ -244,10 +246,11 @@ export class BrowserParameterTranslation {
     }
 }
 
-export async function executeParameterTranslation(config: AiConfig, match: MatchedTranslation, input: TranslationInput): Promise<TranslationResult> {
+export async function executeParameterTranslation(config: AiConfig, match: MatchedTranslation, input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
     if (match.accountProxy) {
+        const timeout = AbortSignal.timeout(match.timeout * 1000);
         const endpoint = input.kind === "audio" ? "/audio/speech" : Array.isArray(input.variables.images) && input.variables.images.length ? "/images/edits" : "/images/generations";
-        const response = await fetch(`/api/v1${endpoint}`, { method: "POST", headers: translationHeaders(config, match), body: JSON.stringify(translationBody(config, input)), signal: AbortSignal.timeout(match.timeout * 1000) });
+        const response = await fetch(`/api/v1${endpoint}`, { method: "POST", headers: translationHeaders(config, match), body: JSON.stringify(translationBody(config, input)), signal: signal ? AbortSignal.any([timeout, signal]) : timeout });
         const data = response.headers.get("Content-Type")?.includes("json") ? await response.json() : await response.blob();
         if (!response.ok || (data.code && data.code !== 0)) throw new Error(data.msg || data.error?.message || `请求失败（${response.status}）`);
         const urls = data instanceof Blob ? [await readFileAsDataUrl(new File([data], "media", { type: data.type }))] : translationMediaURLs(data, input.kind);
@@ -256,7 +259,7 @@ export async function executeParameterTranslation(config: AiConfig, match: Match
     }
     const translation = await BrowserParameterTranslation.create(config, match, input);
     try {
-        return await translation.execute();
+        return await translation.execute(undefined, signal);
     } finally {
         translation.dispose();
     }

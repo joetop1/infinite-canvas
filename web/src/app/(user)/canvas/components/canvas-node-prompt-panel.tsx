@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Maximize2 } from "lucide-react";
+import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -33,6 +33,7 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onStop: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     connectedNodes?: CanvasNodeData[];
     onDisconnectReference?: (fromNodeId: string, toNodeId: string) => void;
@@ -42,7 +43,7 @@ type CanvasNodePromptPanelProps = {
     onImageSettingsOpenChange?: (open: boolean) => void;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], connectedNodes = [], videoFrameOptions = [], videoResourceOptions = [], onDisconnectReference, onStartReferenceSelection, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], connectedNodes = [], videoFrameOptions = [], videoResourceOptions = [], onDisconnectReference, onStartReferenceSelection, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const modelCosts = useConfigStore((state) => state.publicSettings?.modelChannel.modelCosts);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -51,6 +52,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const config = buildNodeConfig(globalConfig, node, mode);
     const { data: autodlWorkflow } = useAutoDLWorkflow(config, mode === "video" ? config.model : "");
     const isPanorama = isPanoramaNodeType(node.type);
+    const mediaLoading = (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.status === "loading";
+    const isStopping = node.metadata?.status === "stopping";
+    const stopFailed = isStopping && Boolean(node.metadata?.errorDetails);
+    const canStop = Boolean(node.metadata?.clientTaskId) && !node.metadata?.isBatchRoot && (mediaLoading || stopFailed);
+    const generating = (isRunning && node.metadata?.status !== "stopped") || mediaLoading;
+    const showStop = canStop || isStopping;
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = isCanvasImageNodeType(node.type) && Boolean(node.metadata?.content);
     const hasVideoImageReferences = mode === "video" && mentionReferences.some((reference) => reference.active && reference.kind === "image");
@@ -68,16 +75,20 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt(sourcePrompt);
     }, [node.id, sourcePrompt]);
 
+    useEffect(() => {
+        if (node.metadata?.status === "stopped") setPrompt("");
+    }, [node.id, node.metadata?.status]);
+
     const updatePrompt = (value: string) => {
         setPrompt(value);
         onPromptChange(node.id, value);
     };
 
-    const canSubmit = Boolean(prompt.trim()) || (mode !== "text" && Boolean(node.metadata?.workflowRef)) || (mode === "video" && isAutoDLConfig(config) && getAutoDLCapabilities(autodlWorkflow)?.promptRequired === false) || (isPanorama && (hasImageContent || mentionReferences.length > 0));
+    const canSubmit = node.metadata?.status === "stopped" || Boolean(prompt.trim()) || (mode !== "text" && Boolean(node.metadata?.workflowRef)) || (mode === "video" && isAutoDLConfig(config) && getAutoDLCapabilities(autodlWorkflow)?.promptRequired === false) || (isPanorama && (hasImageContent || mentionReferences.length > 0));
 
     const submit = () => {
         const text = prompt.trim();
-        if (!canSubmit || isRunning) return;
+        if (!canSubmit || generating || isStopping) return;
         onGenerate(node.id, mode, text);
         if (!isPanorama) setPrompt("");
     };
@@ -140,17 +151,20 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 </div>
                 <Button
                     type="primary"
+                    danger={showStop}
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
-                    disabled={isRunning || !canSubmit || falTextVideoBlocked}
-                    onClick={submit}
-                    aria-label="生成"
+                    disabled={(isStopping && !stopFailed) || (!canStop && (generating || !canSubmit || falTextVideoBlocked))}
+                    onClick={canStop ? () => onStop(node.id) : submit}
+                    aria-label={canStop ? stopFailed ? "重试停止" : "停止" : isStopping ? "停止中" : "生成"}
                 >
-                    <span className="flex items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
-                            <CreditSymbol />
-                            {credits.toLocaleString()}
+                    <span className="relative inline-flex">
+                        <span className={`flex items-center gap-1.5${showStop ? " invisible" : ""}`}>
+                            <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums"><CreditSymbol />{credits.toLocaleString()}</span>
+                            {generating ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
                         </span>
-                        {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
+                        {showStop ? <span className="absolute inset-0 flex items-center justify-center">
+                            {isStopping && !stopFailed ? <LoaderCircle className="size-4 animate-spin" /> : <Square className="size-3.5" fill="currentColor" />}
+                        </span> : null}
                     </span>
                 </Button>
             </div>

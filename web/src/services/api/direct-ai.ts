@@ -57,10 +57,10 @@ function publicReferenceURL(value?: string) {
     }
 }
 
-export async function requestDirectImages(config: AiConfig, provider: DirectAIProvider, endpoint: "/images/generations" | "/images/edits", body: DirectRequestBody, timeoutSeconds: number): Promise<DirectImageResponse> {
+export async function requestDirectImages(config: AiConfig, provider: DirectAIProvider, endpoint: "/images/generations" | "/images/edits", body: DirectRequestBody, timeoutSeconds: number, signal?: AbortSignal): Promise<DirectImageResponse> {
     const startedAt = Date.now();
     const { plan, requestBody, apiKey, protocol } = await prepareDirectRequest(config, provider, endpoint, body);
-    const created = await requestDirectJSON(protocol, plan.url, apiKey, plan.contentType, requestBody, remainingTimeoutMs(startedAt, timeoutSeconds));
+    const created = await requestDirectJSON(protocol, plan.url, apiKey, plan.contentType, requestBody, remainingTimeoutMs(startedAt, timeoutSeconds), signal);
     const directUrls = protocol.readCreatedImageURLs?.(created) || [];
     if (directUrls.length) return directImageResponse(directUrls);
     const rawTaskId = protocol.readTaskId(created);
@@ -69,8 +69,8 @@ export async function requestDirectImages(config: AiConfig, provider: DirectAIPr
 
     for (;;) {
         const waitMs = Math.min(DIRECT_IMAGE_POLL_INTERVAL_MS, remainingTimeoutMs(startedAt, timeoutSeconds));
-        await delay(waitMs);
-        const payload = await requestDirectJSON(protocol, directPollURL(config, protocol, taskId), apiKey, "", undefined, remainingTimeoutMs(startedAt, timeoutSeconds));
+        await delay(waitMs, signal);
+        const payload = await requestDirectJSON(protocol, directPollURL(config, protocol, taskId), apiKey, "", undefined, remainingTimeoutMs(startedAt, timeoutSeconds), signal);
         const result = protocol.readImagePoll(payload);
         if (result.error) throw new Error(result.error);
         if (result.urls.length) return directImageResponse(result.urls);
@@ -78,12 +78,12 @@ export async function requestDirectImages(config: AiConfig, provider: DirectAIPr
     }
 }
 
-export async function createDirectVideoTask(config: AiConfig, provider: DirectAIProvider, body: DirectRequestBody): Promise<DirectVideoResponse> {
+export async function createDirectVideoTask(config: AiConfig, provider: DirectAIProvider, body: DirectRequestBody, signal?: AbortSignal): Promise<DirectVideoResponse> {
     const { plan, requestBody, apiKey, protocol } = await prepareDirectRequest(config, provider, "/videos", body);
     const requestProtocol = plan.protocol === "happyhorse:video-synthesis"
         ? { ...protocol, headers: { ...protocol.headers, "X-DashScope-Async": "enable" } }
         : protocol;
-    const payload = await requestDirectJSON(requestProtocol, plan.url, apiKey, plan.contentType, requestBody);
+    const payload = await requestDirectJSON(requestProtocol, plan.url, apiKey, plan.contentType, requestBody, undefined, signal);
     const rawTaskId = protocol.readTaskId(payload);
     if (!rawTaskId) throw new Error(protocol.readError(payload) || "视频接口没有返回任务 ID");
     const taskId = provider === "tokendance" ? tokenDanceTaskID(plan.protocol, rawTaskId) : rawTaskId;
@@ -95,24 +95,24 @@ export async function createDirectVideoTask(config: AiConfig, provider: DirectAI
     };
 }
 
-export async function pollDirectVideoTask(config: AiConfig, provider: DirectAIProvider, pollId: string): Promise<DirectVideoResponse> {
+export async function pollDirectVideoTask(config: AiConfig, provider: DirectAIProvider, pollId: string, signal?: AbortSignal): Promise<DirectVideoResponse> {
     const channel = requireDirectChannel(config);
     const protocol = directProtocolAdapters[provider];
-    const payload = await requestDirectJSON(protocol, directPollURL(config, protocol, pollId), channel.apiKey, "", undefined);
+    const payload = await requestDirectJSON(protocol, directPollURL(config, protocol, pollId), channel.apiKey, "", undefined, undefined, signal);
     return protocol.readVideoPoll(payload, pollId, config.model || config.videoModel);
 }
 
-export async function requestDirectAudioURL(config: AiConfig, provider: DirectAIProvider, body: DirectRequestBody) {
+export async function requestDirectAudioURL(config: AiConfig, provider: DirectAIProvider, body: DirectRequestBody, signal?: AbortSignal) {
     const startedAt = Date.now();
     const timeoutSeconds = Number(config.timeout) || 600;
     const { plan, requestBody, apiKey, protocol } = await prepareDirectRequest(config, provider, "/audio/speech", body);
     if (!protocol.readAudioPoll) throw new Error("当前协议不支持异步音频");
-    const created = await requestDirectJSON(protocol, plan.url, apiKey, plan.contentType, requestBody, remainingTimeoutMs(startedAt, timeoutSeconds));
+    const created = await requestDirectJSON(protocol, plan.url, apiKey, plan.contentType, requestBody, remainingTimeoutMs(startedAt, timeoutSeconds), signal);
     const id = protocol.readTaskId(created);
     if (!id) throw new Error(protocol.readError(created) || "音频接口没有返回任务 ID");
     for (;;) {
-        await delay(Math.min(DIRECT_IMAGE_POLL_INTERVAL_MS, remainingTimeoutMs(startedAt, timeoutSeconds)));
-        const payload = await requestDirectJSON(protocol, directPollURL(config, protocol, id), apiKey, "", undefined, remainingTimeoutMs(startedAt, timeoutSeconds));
+        await delay(Math.min(DIRECT_IMAGE_POLL_INTERVAL_MS, remainingTimeoutMs(startedAt, timeoutSeconds)), signal);
+        const payload = await requestDirectJSON(protocol, directPollURL(config, protocol, id), apiKey, "", undefined, remainingTimeoutMs(startedAt, timeoutSeconds), signal);
         const result = protocol.readAudioPoll(payload);
         if (result.error) throw new Error(result.error);
         if (result.done && result.url) return { id, url: result.url };
@@ -336,7 +336,7 @@ function restoreDirectFormData(value: unknown) {
     return formData;
 }
 
-async function requestDirectJSON(protocol: DirectProtocolAdapter, url: string, apiKey: string, contentType: string, body?: unknown, timeoutMs?: number) {
+async function requestDirectJSON(protocol: DirectProtocolAdapter, url: string, apiKey: string, contentType: string, body?: unknown, timeoutMs?: number, signal?: AbortSignal) {
     const controller = new AbortController();
     const timeout = timeoutMs ? window.setTimeout(() => controller.abort(), timeoutMs) : 0;
     try {
@@ -349,7 +349,7 @@ async function requestDirectJSON(protocol: DirectProtocolAdapter, url: string, a
                 ...(body === undefined || formData ? {} : { "Content-Type": contentType || "application/json" }),
             },
             ...(body === undefined ? {} : { body: formData ? body : JSON.stringify(body) }),
-            signal: controller.signal,
+            signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
         });
         const payload = await readDirectResponse(response);
         const recoveryMessage = protocol.headers?.["X-App-URL"] ? tokenDanceRecoveryMessage(response.headers.get("TokenDance-Recovery-Action")) : "";
@@ -400,6 +400,17 @@ function remainingTimeoutMs(startedAt: number, timeoutSeconds: number) {
     return remaining;
 }
 
-function delay(ms: number) {
-    return new Promise((resolve) => window.setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    return new Promise<void>((resolve, reject) => {
+        const abort = () => {
+            window.clearTimeout(timer);
+            reject(signal?.reason);
+        };
+        const timer = window.setTimeout(() => {
+            signal?.removeEventListener("abort", abort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", abort, { once: true });
+    });
 }
