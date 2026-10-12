@@ -1565,6 +1565,8 @@ function WorkbenchPanel({
 }) {
     const omniLimits = omniReferenceLimits({ ...config, model, videoModel: model });
     const referenceMode = config.videoReferenceMode || (firstFrame || lastFrame ? "frames" : "omni");
+    const pickerUsesFrames = Boolean(omniLimits) && referenceMode === "frames";
+    const pickerReferences = { hasImageReferences: pickerUsesFrames ? Boolean(firstFrame || lastFrame) : Boolean(references.length || (!omniLimits && (firstFrame || lastFrame))), hasVideoReferences: !pickerUsesFrames && videoReferences.length > 0, hasAudioReferences: !pickerUsesFrames && audioReferences.length > 0 };
     const referenceModeControl = omniLimits ? <div className="space-y-2"><div className="text-xs opacity-65">生成方式</div><div className="flex gap-2">{(["frames", "omni"] as const).map((mode) => <Button key={mode} type={referenceMode === mode ? "primary" : "default"} onClick={() => updateConfig("videoReferenceMode", mode)}>{mode === "omni" ? "全能参考" : "首尾帧"}</Button>)}</div><div className="text-xs opacity-65">{referenceMode === "omni" ? `最多 ${omniLimits.images} 张图片、${omniLimits.videos} 个视频、${omniLimits.audios} 个音频；首尾帧不参与生成。` : "指定首帧后生成；普通参考素材不参与生成。"}</div></div> : null;
     const frameReferencesEnabled = (!omniLimits || referenceMode === "frames") && (Boolean(config.videoWorkflowRef) || supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model })));
     const referenceLimits = !config.videoWorkflowRef && channelProtocolForConfig({ ...config, model, videoModel: model }) === "ark" && (modelKey(model).includes("seedance-2-5") || modelKey(model).includes("seedance2-5")) ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
@@ -1658,7 +1660,7 @@ function WorkbenchPanel({
                         <div className={`grid grid-cols-2 gap-2 sm:grid-cols-3 ${bottomSettingsGridClass} ${bottomSettingsCollapsed ? "hidden lg:grid" : "grid"}`}>
                             <label className="grid gap-1 text-xs text-stone-500 dark:text-stone-400">
                                 模型
-                                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={handleVideoModelChange} capability="video" className="canvas-compact-control !h-11 !rounded-xl" onMissingConfig={() => openConfigDialog(false)} fullWidth />
+                                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={handleVideoModelChange} capability="video" {...pickerReferences} className="canvas-compact-control !h-11 !rounded-xl" onMissingConfig={() => openConfigDialog(false)} fullWidth />
                             </label>
                             {klingBottom ? (
                                 <KlingV26BottomSettings config={config} updateConfig={updateConfig} generateAudio={generateAudio} isKlingV3={klingBottomVariant === "v3"} />
@@ -1747,7 +1749,7 @@ function WorkbenchPanel({
                 </WorkbenchSection>
                 </> : null}
                 {motionControl ? <CharacterOrientationSetting value={config.videoCharacterOrientation} onChange={(value) => updateConfig("videoCharacterOrientation", value)} /> : null}
-                <GenerationSettings config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                <GenerationSettings {...pickerReferences} config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 <WorkbenchSection title="任务数量">
                     <TaskCountControl value={taskCount} onChange={onTaskCountChange} />
                 </WorkbenchSection>
@@ -1993,7 +1995,7 @@ function QuickSwitch({ label, checked, onChange }: { label: string; checked: boo
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, model, updateConfig, openConfigDialog, hasImageReferences, hasVideoReferences, hasAudioReferences }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; hasImageReferences: boolean; hasVideoReferences: boolean; hasAudioReferences: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const handleVideoModelChange = (nextModel: string, channelId?: string) => {
         const nextConfig = { ...config, model: nextModel, videoModel: nextModel, ...(channelId ? { activeChannelId: channelId, videoChannelId: channelId } : {}) };
@@ -2018,7 +2020,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
     return (
         <div className="space-y-3">
             <WorkbenchSection title="模型">
-                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={handleVideoModelChange} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                <ModelPicker config={config} value={model} channelId={config.videoChannelId} workflowRef={config.videoWorkflowRef} onWorkflowChange={(value) => updateConfig("videoWorkflowRef", value)} onChange={handleVideoModelChange} capability="video" hasImageReferences={hasImageReferences} hasVideoReferences={hasVideoReferences} hasAudioReferences={hasAudioReferences} fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </WorkbenchSection>
             <VideoSettingsPanel config={config} modelName={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-3" />
         </div>

@@ -1,3 +1,4 @@
+import { videoModelReferenceError } from "@/lib/model-picker-display";
 import axios from "axios";
 import { selectVideoReferenceMode } from "@/lib/video-reference-mode";
 import { nanoid } from "nanoid";
@@ -15,7 +16,7 @@ import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalize
 import { isKIEGrokVideoModel, isKIEKlingV3Config, kieKlingOmniVariant } from "./protocols/kling-models";
 import { autoDLBaseUrl, getAutoDLCapabilities } from "@/lib/autodl";
 import { fetchAutoDLWorkflow } from "./autodl";
-import { isAgnesVideoV25Model, isCogVideoX3Model, isFalTextToVideoModel, modelKey, normalizeCogVideoX3Duration, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
+import { isAgnesVideoV25Model, isCogVideoX3Model, modelKey, normalizeCogVideoX3Duration, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer } from "@/services/file-storage";
 import { autoSyncToCloud, imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, channelProtocolForConfig, directAIProviderForConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
@@ -121,9 +122,8 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
     const input = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references));
-    if (isFalTextToVideoModel(model, videoChannelProtocol(config, model)) && input.references.length + Number(Boolean(input.firstFrame || input.lastFrame)) > 0) {
-        throw new VideoRequestError("当前选择的是文生视频模型，不能接收参考图。请改选图生视频或参考图生视频模型后再生成。");
-    }
+    const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 });
+    if (referenceError) throw new VideoRequestError(referenceError);
     if (videoChannelProtocol(config, model) === "replicate" && model.split(/[?#:]/)[0].toLowerCase() === "wan-video/wan-2.5-i2v" && (input.references.length + Number(Boolean(input.firstFrame)) !== 1 || input.lastFrame)) {
         throw new VideoRequestError("Replicate Wan 2.5 图生视频只支持一张起始图片，请保留一张参考图或首帧，移除其余图片和尾帧后再生成");
     }

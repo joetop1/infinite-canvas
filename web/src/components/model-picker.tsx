@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { useAutoDLWorkflowNames } from "@/hooks/use-autodl-workflow";
 import { isWorkflowProtocol } from "@/lib/model-channel";
 import { cn } from "@/lib/utils";
-import { isFalTextToVideoModel, videoModelSummary } from "@/lib/video-model-capabilities";
+import { videoModelDisplayName, videoModelPickerTags, videoModelReferenceError } from "@/lib/model-picker-display";
 import type { WorkflowRef } from "@/lib/workflow-channel";
 import { filterModelsByCapability, normalizeLocalChannels, useConfigStore, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -18,6 +18,8 @@ type ModelPickerProps = {
     channelId?: string;
     capability?: ModelCapability;
     hasImageReferences?: boolean;
+    hasVideoReferences?: boolean;
+    hasAudioReferences?: boolean;
     onChange: (model: string, channelId?: string) => void;
     workflowRef?: WorkflowRef;
     onWorkflowChange?: (ref?: WorkflowRef) => void;
@@ -30,12 +32,13 @@ type ModelPickerProps = {
 type PickerBase = { key: string; channelId?: string; channelName: string; protocol?: string; baseUrl?: string };
 type PickerOption = (PickerBase & { model: string }) | (PickerBase & { model: ""; workflowRef: WorkflowRef; label: string });
 
-export function ModelPicker({ config, value, channelId, capability, hasImageReferences = false, onChange, workflowRef, onWorkflowChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, channelId, capability, hasImageReferences = false, hasVideoReferences = false, hasAudioReferences = false, onChange, workflowRef, onWorkflowChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const token = useUserStore((state) => state.token);
     const userReady = useUserStore((state) => state.isReady);
     const publicSettings = useConfigStore((state) => state.publicSettings);
+    const referenceFiltering = capability === "video" && (hasImageReferences || hasVideoReferences || hasAudioReferences);
     const workflowEnabled = Boolean(onWorkflowChange && capability && capability !== "text");
     const channelOptions = useMemo<PickerOption[]>(() => {
         const channels =
@@ -43,15 +46,16 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
                 ? config.publicChannels.map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "云端渠道", baseUrl: channel.baseUrl, models: channel.models, modelCapabilities: channel.modelCapabilities, workflows: channel.workflows || [] }))
                 : normalizeLocalChannels(config).map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "本地渠道", baseUrl: channel.baseUrl, models: channel.models, modelCapabilities: channel.modelCapabilities, workflows: channel.workflowSummaries || [] }));
         const classifiedModels = channels.filter((channel) => !isWorkflowProtocol(channel.protocol || "")).flatMap((channel) => filterModelsByCapability(channel.models ?? [], capability, channel.protocol || "", channel.modelCapabilities).map((model) => ({ key: `${channel.id}::${model}`, channelId: channel.id, channelName: channel.name, protocol: channel.protocol, baseUrl: channel.baseUrl, model })));
-        const filtered = classifiedModels.filter((item) => !(hasImageReferences && isFalTextToVideoModel(item.model, item.protocol || "")));
+        const filtered = classifiedModels.filter((item) => capability !== "video" || !videoModelReferenceError(item.model, item.protocol || "", { hasImageReferences, hasVideoReferences, hasAudioReferences }));
         if (!workflowEnabled || !token) return filtered;
         const scope = config.channelMode === "remote" ? "system" : "personal";
         return [...filtered, ...channels.flatMap((channel) => isWorkflowProtocol(channel.protocol || "") ? channel.workflows.filter((entry) => entry.enabled && entry.capability === capability && entry.provider === channel.protocol).map((entry) => {
             const ref: WorkflowRef = { scope, channelId: channel.id || "", kind: entry.kind, workflowId: entry.workflowId };
             return { key: `workflow:${JSON.stringify([ref.scope, ref.channelId, ref.kind, ref.workflowId])}`, channelId: channel.id, channelName: channel.name, protocol: channel.protocol, baseUrl: channel.baseUrl, model: "", workflowRef: ref, label: entry.title || entry.workflowId };
         }) : [])];
-    }, [capability, config, hasImageReferences, token, workflowEnabled]);
-    const modelLabel = useAutoDLWorkflowNames(channelOptions);
+    }, [capability, config, hasImageReferences, hasVideoReferences, hasAudioReferences, token, workflowEnabled]);
+    const workflowLabel = useAutoDLWorkflowNames(channelOptions);
+    const modelLabel = (model: string, option?: PickerBase | null) => option?.protocol === "autodl" ? workflowLabel(model, option) : capability === "video" ? videoModelDisplayName(model) : model;
     const currentOption = useMemo<PickerOption | undefined>(() => {
         if (workflowRef && workflowEnabled) return channelOptions.find((item) => "workflowRef" in item && item.key === `workflow:${JSON.stringify([workflowRef.scope, workflowRef.channelId, workflowRef.kind, workflowRef.workflowId])}`);
         if (!value) return undefined;
@@ -87,7 +91,7 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
             open={open}
             value={current ? currentValue : ""}
             onOpenChange={(nextOpen) => {
-                if (nextOpen && !options.length && config.channelMode === "local") {
+                if (nextOpen && !options.length && !referenceFiltering && config.channelMode === "local") {
                     onMissingConfig?.();
                     return;
                 }
@@ -117,7 +121,7 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
-                className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
+                className="z-[1200] w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
                 position="popper"
                 align="start"
                 side="bottom"
@@ -127,13 +131,13 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
             >
                 {options.length ? (
                     options.map((option) => (
-                        <SelectItem key={option.key} value={option.key} textValue={`${"workflowRef" in option ? option.label : modelLabel(option.model, option)} ${option.model} ${option.channelName}`}>
-                            <ModelLabel model={"workflowRef" in option ? option.workflowRef.workflowId : option.model} label={"workflowRef" in option ? `工作流 · ${option.label}` : modelLabel(option.model, option)} channelName={option.channelName} details={capability === "video" && !("workflowRef" in option) ? videoModelSummary(option.model, option.protocol || "") : null} />
+                        <SelectItem className="py-2 pr-8 pl-2.5 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 data-[state=checked]:bg-accent" key={option.key} value={option.key} textValue={`${"workflowRef" in option ? option.label : modelLabel(option.model, option)} ${option.model} ${option.channelName}`}>
+                            <ModelLabel model={"workflowRef" in option ? option.workflowRef.workflowId : option.model} label={"workflowRef" in option ? `工作流 · ${option.label}` : modelLabel(option.model, option)} channelName={option.channelName} details={capability === "video" && !("workflowRef" in option) ? videoModelPickerTags(option.model, option.protocol || "") : null} />
                         </SelectItem>
                     ))
                 ) : (
                     <SelectItem value="__empty__" disabled>
-                        {config.channelMode === "remote" ? "暂无可用模型" : "请先到配置里拉取模型列表"}
+                        {referenceFiltering ? "暂无匹配参考素材的模型，请检查渠道配置" : config.channelMode === "remote" ? "暂无可用模型" : "请先到配置里拉取模型列表"}
                     </SelectItem>
                 )}
             </SelectContent>
@@ -141,18 +145,16 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
     );
 }
 
-function ModelLabel({ model, label, channelName, details }: { model: string; label?: string; channelName?: string; details?: { resolution: string; duration: string; supportsAudio: boolean } | null }) {
+function ModelLabel({ model, label, channelName, details }: { model: string; label?: string; channelName?: string; details?: string[] | null }) {
     return (
-        <span className="flex min-w-0 flex-col gap-1 py-1">
+        <span className="flex w-full min-w-0 flex-col gap-1.5">
             <span className="flex min-w-0 items-center gap-2">
                 <ModelIcon model={model} />
-                <span className="truncate" title={model}>{label || model}</span>
-                {channelName ? <span className="ml-auto max-w-24 shrink-0 truncate text-xs opacity-50">{channelName}</span> : null}
+                <span className="min-w-0 flex-1 truncate font-medium" title={model}>{label || model}</span>
+                {channelName ? <span className="ml-auto max-w-20 shrink-0 truncate text-xs opacity-50">{channelName}</span> : null}
             </span>
-            {details ? <span className="flex flex-wrap gap-1.5 pl-6 text-[11px] leading-4 text-muted-foreground">
-                <span className="rounded-full bg-muted px-1.5">{details.resolution}</span>
-                <span className="rounded-full bg-muted px-1.5">{details.duration}</span>
-                <span className="rounded-full bg-muted px-1.5">{details.supportsAudio ? "支持音频" : "无音频"}</span>
+            {details ? <span className="flex flex-wrap gap-1 pl-6 text-[11px] leading-4 text-muted-foreground">
+                {details.map((detail) => <span key={detail} className="rounded-md bg-muted px-1.5 py-0.5">{detail}</span>)}
             </span> : null}
         </span>
     );

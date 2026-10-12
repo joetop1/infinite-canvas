@@ -175,5 +175,5 @@ export function videoModelSummary(modelName: string, protocol = "") {
     const duration = profile.durationOptions?.length
         ? `${profile.durationOptions[0]}–${profile.durationOptions[profile.durationOptions.length - 1]}秒`
         : `${profile.minSeconds}–${profile.maxSeconds}秒`;
-    return { resolution: highestResolution === "2k" ? "2K" : `${highestResolution}p`, duration, supportsAudio: profile.supportsAudio };
+    return { resolution: /k$/i.test(highestResolution) ? highestResolution.toUpperCase() : `${highestResolution}p`, duration, supportsAudio: profile.supportsAudio };
 }
