@@ -1,5 +1,7 @@
 "use client";
 
+import type { ModelMetadata } from "@/lib/openrouter-catalog";
+
 import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -18,6 +20,7 @@ export type LocalModelChannel = {
     apiKey: string;
     models: string[];
     modelCapabilities?: ModelCapabilities;
+    modelMetadata?: ModelMetadata;
     uploadApiKey?: string;
     bridgeId?: string;
     comfyUrl?: string;
@@ -94,7 +97,7 @@ export type AiConfig = {
         workflowAgent: string;
     };
     localChannels: LocalModelChannel[];
-    publicChannels: Array<{ id?: string; protocol?: LocalModelChannel["protocol"]; name?: string; baseUrl?: string; models?: string[]; modelCapabilities?: ModelCapabilities; parameterTranslationModels?: string[]; workflows?: WorkflowSummary[]; weight?: number; timeout?: number; enabled?: boolean; remark?: string }>;
+    publicChannels: Array<{ id?: string; protocol?: LocalModelChannel["protocol"]; name?: string; baseUrl?: string; models?: string[]; modelCapabilities?: ModelCapabilities; modelMetadata?: ModelMetadata; parameterTranslationModels?: string[]; workflows?: WorkflowSummary[]; weight?: number; timeout?: number; enabled?: boolean; remark?: string }>;
     syncStorageConfig: boolean;
     syncWebDAVStorageConfig: boolean;
     activeChannelId: string;
@@ -532,6 +535,7 @@ export function normalizeLocalChannels(config: Partial<AiConfig>): LocalModelCha
         apiKey: channel.apiKey || "",
         models: Array.isArray(channel.models) ? channel.models.filter(Boolean) : [],
         modelCapabilities: channel.modelCapabilities || {},
+        modelMetadata: channel.modelMetadata || {},
         ...(isWorkflowProtocol(channel.protocol || "") ? {
             uploadApiKey: channel.uploadApiKey || "",
             bridgeId: channel.bridgeId || "",

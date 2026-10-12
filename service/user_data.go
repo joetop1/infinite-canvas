@@ -53,6 +53,8 @@ type userLocalModelChannelInput struct {
 	BaseURL  string   `json:"baseUrl"`
 	APIKey   string   `json:"apiKey"`
 	Models   []string `json:"models"`
+	ModelCapabilities map[string]string `json:"modelCapabilities"`
+	ModelMetadata map[string]json.RawMessage `json:"modelMetadata"`
 }
 
 func SelectUserLocalModelChannelForModel(userID string, modelName string, channelID string) (model.ModelChannel, error) {
@@ -110,6 +112,8 @@ func SelectUserLocalModelChannelForModel(userID string, modelName string, channe
 			BaseURL:              baseURL,
 			APIKey:               apiKey,
 			Models:               models,
+			ModelCapabilities: channel.ModelCapabilities,
+			ModelMetadata: channel.ModelMetadata,
 			Weight:               1,
 			Timeout:              600,
 			Enabled:              true,

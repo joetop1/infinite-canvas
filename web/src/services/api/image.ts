@@ -1,3 +1,5 @@
+import { openRouterImageBody } from "./protocols/openrouter-media";
+import { fetchOpenRouterCatalog } from "@/lib/openrouter-catalog";
 import axios from "axios";
 import { executeParameterTranslation, findParameterTranslation, translationBody, translationHeaders, type TranslationInput } from "./channel-parameter-translation";
 
@@ -249,7 +251,7 @@ function normalizeBase64Image(value: string, fallbackMime: string) {
 
 function resolveImageDataUrl(item: Record<string, unknown>, mime: string) {
     if (typeof item.b64_json === "string" && item.b64_json) {
-        return normalizeBase64Image(item.b64_json, mime);
+        return normalizeBase64Image(item.b64_json, typeof item.media_type === "string" ? item.media_type : mime);
     }
     if (typeof item.url === "string" && item.url) {
         return item.url;
@@ -961,6 +963,14 @@ async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?
 		const result = await executeParameterTranslation(config,translation,input,signal);
 		return result.urls.map((dataUrl) => ({id:nanoid(),dataUrl}));
 	}
+    if (channelProtocolForConfig(config) === "openrouter") {
+        const params = { ...createImageRequestParams(config), signal };
+        const body = await openRouterImageBody(config, prompt, references, params.n);
+        const endpoint = usesAccountProxy(config) ? "/images/generations" : "/images";
+        return requestAndParseImages(config, endpoint, body, params.timeoutSeconds,
+            () => withTimeout(params.timeoutSeconds, signal, (signal) => fetch(aiApiUrl(config, endpoint), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify(body), signal })),
+            async (response) => { const payload = await response.json(); return { images: parseImagePayload(payload, "image/png"), responseBody: stringifyLogPayload(payload) }; });
+    }
     assertImageReferencesSupported(config.model, references);
     const params = { ...createImageRequestParams(config), signal };
     const inputImageDataUrls = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
@@ -1092,6 +1102,7 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     const tokenHeaders = { ...aiHeaders(config), ...taskChannelHeader };
     const jsonHeaders = { ...aiHeaders(config, "application/json"), ...taskChannelHeader };
     const meta = { nodeId: options.nodeId || "", source: options.source || "canvas", sourceId: options.sourceId || "", clientTaskId: options.clientTaskId || "", prompt, channelId: taskChannelId };
+    if (channelProtocolForConfig(config) === "openrouter") return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/generations", ...meta, request: await openRouterImageBody(config, prompt, references, params.n) }) };
     if (isGeminiConfig(config)) {
         const body = await createGeminiImageBody(config, prompt, references, params);
         return {
@@ -1256,6 +1267,7 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
 export async function fetchImageModels(config: AiConfig) {
     if (config.channelMode === "remote") return config.models;
     const channel = localChannelForActiveModel(config);
+    if (channel?.protocol === "openrouter") return (await fetchOpenRouterCatalog(channel.baseUrl, channel.apiKey)).models;
     if (channel?.protocol === "gemini") return fetchGeminiModels(channel.baseUrl, channel.apiKey);
     if (channel?.protocol === "autodl") return (await fetchAutoDLWorkflows(channel.baseUrl)).map((workflow) => workflow.uuid);
     if (isMiniMaxChannel(channel)) return [...miniMaxModels];

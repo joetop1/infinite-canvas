@@ -31,6 +31,7 @@ type ModelChannel struct {
 	WorkflowDir  string          `json:"workflowDir,omitempty"`
 	Workflows    []WorkflowEntry `json:"workflows,omitempty"`
 
+	ModelMetadata map[string]json.RawMessage `json:"modelMetadata,omitempty"`
 	ModelCapabilities    map[string]string `json:"modelCapabilities,omitempty"`
 	ParameterTranslation string            `json:"parameterTranslation,omitempty"`
 }
@@ -128,6 +129,7 @@ type PublicModelChannelInfo struct {
 	Remark                     string            `json:"remark"`
 	Workflows                  []WorkflowSummary `json:"workflows,omitempty"`
 
+	ModelMetadata map[string]json.RawMessage `json:"modelMetadata,omitempty"`
 	ModelCapabilities map[string]string `json:"modelCapabilities,omitempty"`
 }
 

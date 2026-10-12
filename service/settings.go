@@ -1174,7 +1174,9 @@ func publicChannelInfos(channels []model.ModelChannel, availableModels, availabl
 			}
 		}
 		modelCapabilities := map[string]string{}
+		modelMetadata := map[string]json.RawMessage{}
 		for _, name := range models {
+			if metadata, ok := channel.ModelMetadata[name]; ok { modelMetadata[name] = metadata }
 			if capability, ok := channel.ModelCapabilities[name]; ok {
 				modelCapabilities[name] = capability
 			}
@@ -1194,6 +1196,7 @@ func publicChannelInfos(channels []model.ModelChannel, availableModels, availabl
 			Remark:                     channel.Remark,
 
 			ModelCapabilities: modelCapabilities,
+			ModelMetadata: modelMetadata,
 		})
 	}
 	return result

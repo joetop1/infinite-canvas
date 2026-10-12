@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchOpenRouterCatalog, type ModelMetadata } from "@/lib/openrouter-catalog";
+
 import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
@@ -242,11 +244,11 @@ export function AppConfigModal() {
         }
         setLoadingModels(true);
         try {
-            const results = await Promise.allSettled(channels.map(async (channel) => fetchImageModels(configForLocalChannel(config, channel))));
+            const results = await Promise.allSettled(channels.map(async (channel) => channel.protocol === "openrouter" ? fetchOpenRouterCatalog(channel.baseUrl, channel.apiKey) : { models: await fetchImageModels(configForLocalChannel(config, channel)) }));
             const updated = new Map(channels.map((channel, index) => [channel.id, results[index]] as const));
             updateLocalChannels(allChannels.map((channel) => {
                 const result = updated.get(channel.id);
-                return result?.status === "fulfilled" ? { ...channel, models: result.value } : channel;
+                return result?.status === "fulfilled" ? { ...channel, ...result.value } : channel;
             }));
             const failedCount = results.filter((result) => result.status === "rejected").length;
             if (failedCount) message.warning(`${failedCount} 个渠道拉取失败，已保留原有模型，可在“选择”中手动增加模型`);
@@ -308,7 +310,7 @@ export function AppConfigModal() {
 
     const closeLocalModelSelector = () => setModelSelectChannelId("");
 
-    const confirmLocalModelSelector = async (models: string[], modelCapabilities: ModelCapabilities, source: string) => {
+    const confirmLocalModelSelector = async (models: string[], modelCapabilities: ModelCapabilities, source: string, modelMetadata: ModelMetadata) => {
         if (!modelSelectChannelId) return;
         const accountId = user?.id || "guest";
         if (parameterTranslation !== undefined && source !== parameterTranslation) {
@@ -318,7 +320,7 @@ export function AppConfigModal() {
             await useChannelTranslationStore.getState().save(accountId, modelSelectChannelId, source);
             if ((useUserStore.getState().user?.id || "guest") !== accountId) throw new Error("登录状态已变化");
         }
-        patchLocalChannel(modelSelectChannelId, { models, modelCapabilities });
+        patchLocalChannel(modelSelectChannelId, { models, modelCapabilities, modelMetadata });
         closeLocalModelSelector();
     };
 
@@ -381,6 +383,7 @@ export function AppConfigModal() {
             message.error("请先填写该渠道的 Base URL 和 API Key");
             return;
         }
+        if (modelSelectChannel.protocol === "openrouter") return fetchOpenRouterCatalog(modelSelectChannel.baseUrl, modelSelectChannel.apiKey);
         return uniqueModels(await fetchImageModels(configForLocalChannel(config, modelSelectChannel)));
     };
 

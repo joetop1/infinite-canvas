@@ -1,3 +1,4 @@
+import type { ProviderModelMetadata } from "@/lib/openrouter-catalog";
 export function modelKey(modelName: string) {
     return modelName.trim().toLowerCase().replace(/[._/]+/g, "-");
 }
@@ -126,11 +127,18 @@ export type VideoModelProfile = {
     maxSeconds: number;
     durationOptions?: string[];
     supportsAudio: boolean;
+    audioKnown?: boolean;
 };
 
 // Profiles are intentionally limited to models whose UI constraints are known.
 // Unlisted models keep the existing generic controls rather than showing guesses.
-export function videoModelProfile(modelName: string, protocol = ""): VideoModelProfile | null {
+export function videoModelProfile(modelName: string, protocol = "", metadata?: ProviderModelMetadata): VideoModelProfile | null {
+    if (protocol === "openrouter") {
+        const resolutions = metadata?.supported_resolutions?.map((value) => value.toLowerCase().replace(/p$/, ""));
+        const durations = metadata?.supported_durations?.filter((value) => value > 0).sort((a, b) => a - b);
+        if (!resolutions?.length || !durations?.length) return null;
+        return { resolutions, defaultResolution: resolutions[0], minSeconds: durations[0], maxSeconds: durations[durations.length - 1], durationOptions: durations.map(String), supportsAudio: metadata?.generate_audio === true, audioKnown: typeof metadata?.generate_audio === "boolean" };
+    }
     const model = modelName.trim().toLowerCase().split(/[?#]/)[0].replace(/[._/]+/g, "-");
     if (!model) return null;
 
@@ -168,12 +176,12 @@ export function videoModelProfile(modelName: string, protocol = ""): VideoModelP
     return null;
 }
 
-export function videoModelSummary(modelName: string, protocol = "") {
-    const profile = videoModelProfile(modelName, protocol);
+export function videoModelSummary(modelName: string, protocol = "", metadata?: ProviderModelMetadata) {
+    const profile = videoModelProfile(modelName, protocol, metadata);
     if (!profile) return null;
     const highestResolution = profile.resolutions[profile.resolutions.length - 1];
     const duration = profile.durationOptions?.length
         ? `${profile.durationOptions[0]}–${profile.durationOptions[profile.durationOptions.length - 1]}秒`
         : `${profile.minSeconds}–${profile.maxSeconds}秒`;
-    return { resolution: /k$/i.test(highestResolution) ? highestResolution.toUpperCase() : `${highestResolution}p`, duration, supportsAudio: profile.supportsAudio };
+    return { resolution: /k$/i.test(highestResolution) ? highestResolution.toUpperCase() : `${highestResolution}p`, duration, supportsAudio: profile.supportsAudio, audioKnown: profile.audioKnown !== false };
 }

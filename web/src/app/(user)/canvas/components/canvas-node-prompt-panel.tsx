@@ -1,5 +1,7 @@
 "use client";
 
+import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
+
 import { useEffect, useState } from "react";
 import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
@@ -66,7 +68,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasVideoImageReferences = mode === "video" && (framesOnly ? Boolean(node.metadata?.firstFrameNodeId || node.metadata?.lastFrameNodeId) : mentionReferences.some((reference) => reference.active && reference.kind === "image") || connectedNodes.some((item) => isCanvasImageNodeType(item.type)) || (!omniLimits && Boolean(node.metadata?.firstFrameNodeId || node.metadata?.lastFrameNodeId)));
     const hasVideoReferences = mode === "video" && !framesOnly && mentionReferences.some((reference) => reference.active && reference.kind === "video");
     const hasAudioReferences = mode === "video" && !framesOnly && mentionReferences.some((reference) => reference.active && reference.kind === "audio");
-    const videoReferenceError = mode === "video" && !node.metadata?.workflowRef ? videoModelReferenceError(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }), { hasImageReferences: hasVideoImageReferences, hasVideoReferences, hasAudioReferences }) : "";
+    const videoReferenceError = mode === "video" && !node.metadata?.workflowRef ? videoModelReferenceError(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }), { hasImageReferences: hasVideoImageReferences, hasVideoReferences, hasAudioReferences }, modelMetadataForConfig(config, config.model)) : "";
     const sourcePrompt = isPanorama ? node.metadata?.panoramaSourcePrompt || "" : node.metadata?.prompt || "";
     const [prompt, setPrompt] = useState(sourcePrompt);
     const [expanded, setExpanded] = useState(false);

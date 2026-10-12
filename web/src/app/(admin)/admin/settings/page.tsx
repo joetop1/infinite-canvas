@@ -1,5 +1,7 @@
 "use client";
 
+import type { ModelMetadata } from "@/lib/openrouter-catalog";
+
 import { CheckCircleOutlined, DeleteOutlined, FormatPainterOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
 import { json } from "@codemirror/lang-json";
 import { App, Button, Card, Col, Drawer, Flex, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
@@ -247,7 +249,7 @@ export default function AdminSettingsPage() {
 
     const saveChannel = async () => {
         const values = await channelForm.validateFields();
-        const channel = normalizeChannel(isWorkflowProtocol(values.protocol) ? { ...workflowChannelDraft, ...channelForm.getFieldsValue(true), ...values } : { ...values, modelCapabilities: channelForm.getFieldValue("modelCapabilities"), parameterTranslation: channelForm.getFieldValue("parameterTranslation") });
+        const channel = normalizeChannel(isWorkflowProtocol(values.protocol) ? { ...workflowChannelDraft, ...channelForm.getFieldsValue(true), ...values } : { ...values, modelCapabilities: channelForm.getFieldValue("modelCapabilities"), parameterTranslation: channelForm.getFieldValue("parameterTranslation"), modelMetadata: channelForm.getFieldValue("modelMetadata") });
         if (channel.protocol === "runninghub" && (!channel.baseUrl.trim() || (!channel.apiKey.trim() && editingChannelIndex === null))) {
             message.error("请填写 RunningHub Base URL 和积分 API Key");
             return;
@@ -278,8 +280,8 @@ export default function AdminSettingsPage() {
 
     const closeChannelModelSelector = () => setIsModelSelectorOpen(false);
 
-    const confirmChannelModelSelector = (models: string[], modelCapabilities: ModelCapabilities, parameterTranslation: string) => {
-        channelForm.setFieldsValue({ models, modelCapabilities, parameterTranslation });
+    const confirmChannelModelSelector = (models: string[], modelCapabilities: ModelCapabilities, parameterTranslation: string, modelMetadata: ModelMetadata) => {
+        channelForm.setFieldsValue({ models, modelCapabilities, parameterTranslation, modelMetadata });
         rememberModels(models);
         closeChannelModelSelector();
     };
@@ -1207,6 +1209,7 @@ function normalizeChannel(item: Partial<AdminModelChannel> = {}): AdminModelChan
         apiKey: item.apiKey || "",
         models: item.models || [],
         modelCapabilities: item.modelCapabilities || {},
+        modelMetadata: item.modelMetadata || {},
         parameterTranslation: item.parameterTranslation || "",
         uploadApiKey: item.uploadApiKey || "",
         bridgeId: item.bridgeId || "",

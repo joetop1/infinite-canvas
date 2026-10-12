@@ -1,3 +1,4 @@
+import { openRouterOmniReferences, type ProviderModelMetadata } from "@/lib/openrouter-catalog";
 import { isFalTextToVideoModel, modelKey, supportsVideoFrameReferences, videoModelSummary } from "@/lib/video-model-capabilities";
 
 export type PickerReferences = { hasImageReferences?: boolean; hasVideoReferences?: boolean; hasAudioReferences?: boolean };
@@ -21,8 +22,12 @@ export function videoModelDisplayName(id: string) {
     return id.replace(/^(?:fal-ai|bytedance|black-forest-labs|google|minimax|wan-video)\//i, "").replace(/\/(?:text-to-video|image-to-video|reference-to-video|video-to-video)$/i, "").replace(/[\/_]+/g, " · ");
 }
 
-function videoReferenceSupport(id: string, protocol: string) {
+function videoReferenceSupport(id: string, protocol: string, metadata?: ProviderModelMetadata) {
     const key = modelKey(id);
+    if (protocol === "openrouter") {
+        if (openRouterOmniReferences(id)) return { image: true, video: true, audio: true, label: "全能参考" };
+        return { image: metadata?.supported_frame_images?.length ? true : undefined, video: false, audio: false, label: metadata?.supported_frame_images?.includes("last_frame") ? "首尾帧" : metadata?.supported_frame_images?.includes("first_frame") ? "首帧参考" : "参考能力待确认" };
+    }
     const omni = /^(?:doubao-)?seedance-2-(?:0|5)(?:-|$)/.test(key) && ["ark", "openai"].includes(protocol);
     if (omni) return { image: true, video: true, audio: true, label: "全能参考" };
     if (isFalTextToVideoModel(id, protocol) || key.includes("text-to-video") || /(?:^|-)t2v(?:-|$)/.test(key)) return { image: false, video: false, audio: false, label: "文生视频" };
@@ -34,14 +39,14 @@ function videoReferenceSupport(id: string, protocol: string) {
     return { label: "参考能力待确认" };
 }
 
-export function videoModelPickerTags(id: string, protocol: string) {
-    const summary = videoModelSummary(id, protocol);
-    const referenceLabel = videoReferenceSupport(id, protocol).label;
-    return summary ? [summary.resolution, summary.duration, summary.supportsAudio ? "有声" : "无声", referenceLabel] : ["分辨率／时长／音频待确认", referenceLabel];
+export function videoModelPickerTags(id: string, protocol: string, metadata?: ProviderModelMetadata) {
+    const summary = videoModelSummary(id, protocol, metadata);
+    const referenceLabel = videoReferenceSupport(id, protocol, metadata).label;
+    return summary ? [summary.resolution, summary.duration, !summary.audioKnown ? "音频待确认" : summary.supportsAudio ? "有声" : "无声", referenceLabel] : ["分辨率／时长／音频待确认", referenceLabel];
 }
 
-export function videoModelReferenceError(id: string, protocol: string, references: PickerReferences) {
-    const support = videoReferenceSupport(id, protocol);
+export function videoModelReferenceError(id: string, protocol: string, references: PickerReferences, metadata?: ProviderModelMetadata) {
+    const support = videoReferenceSupport(id, protocol, metadata);
     if (references.hasImageReferences && support.image === false) return "此模型不支持参考图片，请选择图生视频或全能参考模型";
     if (references.hasVideoReferences && support.video === false) return "此模型不支持参考视频，请选择支持视频参考的模型";
     if (references.hasAudioReferences && support.audio === false) return "此模型不支持参考音频，请选择全能参考模型";

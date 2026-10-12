@@ -1,5 +1,7 @@
 "use client";
 
+import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
+
 import { type CSSProperties, type ReactNode } from "react";
 import { Input, Switch } from "antd";
 
@@ -59,7 +61,7 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
     const grokMode = config.videoMode === "fun" || config.videoMode === "spicy" ? config.videoMode : "normal";
     const cogVideoX3 = isCogVideoX3Model(model);
     const falKlingV21 = isFalKlingV21MasterModel(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
-    const profile = videoModelProfile(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
+    const profile = videoModelProfile(model, channelProtocolForConfig({ ...config, model, videoModel: model }), modelMetadataForConfig(config, model));
     const seconds = autodl ? config.videoSeconds ?? "" : cogVideoX3 ? normalizeCogVideoX3Duration(config.videoSeconds) : falKlingV21 ? normalizeFalKlingV21Duration(config.videoSeconds) : config.videoSeconds || "6";
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
@@ -258,7 +260,7 @@ function SeedanceVideoSettingsPanel({ config, modelName, onConfigChange, theme, 
     const model = modelName || config.model || config.videoModel;
     const modelId = modelKey(model);
     const seedance20 = (modelId.includes("seedance-2-0") || modelId.includes("seedance2-0") || modelId === "bytedance-seedance-2") && !isSeedanceFastOrMiniModel(model);
-    const profile = videoModelProfile(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
+    const profile = videoModelProfile(model, channelProtocolForConfig({ ...config, model, videoModel: model }), modelMetadataForConfig(config, model));
     const resolution = seedance20 ? normalizeVideoResolutionValue(config.vquality) : normalizeSeedanceResolution(config.vquality, model);
     const ratio = normalizeSeedanceRatio(config.size);
     const maxSeconds = (modelId.includes("seedance-2-5") || modelId.includes("seedance2-5") || modelId.includes("sd2-5")) ? 30 : 15;

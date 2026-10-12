@@ -1,4 +1,6 @@
 "use client";
+
+import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
 import axios from "axios";
 
 import { AlertCircle, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ChevronUp, ClipboardPaste, CloudUpload, Copy, Download, FolderPlus, History, LoaderCircle, Music2, PanelBottom, PanelLeft, Plus, RotateCcw, SlidersHorizontal, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
@@ -1575,7 +1577,7 @@ function WorkbenchPanel({
     const cogVideoX3 = !config.videoWorkflowRef && isCogVideoX3Model(model);
     const falKlingV21 = !config.videoWorkflowRef && isFalKlingV21MasterModel(model, channelProtocolForConfig({ ...config, model, videoModel: model }));
     const videoProtocol = channelProtocolForConfig({ ...config, model, videoModel: model });
-    const videoProfile = !config.videoWorkflowRef ? videoModelProfile(model, videoProtocol) : null;
+    const videoProfile = !config.videoWorkflowRef ? videoModelProfile(model, videoProtocol, modelMetadataForConfig(config, model)) : null;
     const profileResolutionOptions = videoProfile ? videoResolutionOptions.filter((item) => videoProfile.resolutions.includes(item.value)) : null;
     const audioGenerationEnabled = videoProfile?.supportsAudio ?? supportsVideoAudioGeneration(model, videoProtocol);
     const generateAudio = boolConfig(config.videoGenerateAudio, false);
@@ -1593,7 +1595,7 @@ function WorkbenchPanel({
     const handleVideoModelChange = (nextModel: string, channelId?: string) => {
         const nextConfig = { ...config, model: nextModel, videoModel: nextModel, ...(channelId ? { activeChannelId: channelId, videoChannelId: channelId } : {}) };
         const nextProtocol = channelProtocolForConfig(nextConfig);
-        const profile = videoModelProfile(nextModel, nextProtocol);
+        const profile = videoModelProfile(nextModel, nextProtocol, modelMetadataForConfig(nextConfig, nextModel));
         updateConfig("videoModel", nextModel);
         if (channelId) updateConfig("videoChannelId", channelId);
         if (!profile) return;
@@ -1999,7 +2001,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog, has
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const handleVideoModelChange = (nextModel: string, channelId?: string) => {
         const nextConfig = { ...config, model: nextModel, videoModel: nextModel, ...(channelId ? { activeChannelId: channelId, videoChannelId: channelId } : {}) };
-        const profile = videoModelProfile(nextModel, channelProtocolForConfig(nextConfig));
+        const profile = videoModelProfile(nextModel, channelProtocolForConfig(nextConfig), modelMetadataForConfig(nextConfig, nextModel));
         updateConfig("videoModel", nextModel);
         if (channelId) updateConfig("videoChannelId", channelId);
         if (!profile) return;

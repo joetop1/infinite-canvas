@@ -1,3 +1,4 @@
+import type { ModelMetadata, ChannelModelCatalog } from "@/lib/openrouter-catalog";
 import type { ModelChannelProtocol } from "@/lib/model-channel";
 import type { ModelCapabilities } from "@/stores/use-config-store";
 import type { WorkflowEntry, WorkflowSummary } from "@/lib/workflow-channel";
@@ -189,6 +190,7 @@ export type AdminModelChannel = {
     apiKey: string;
     models: string[];
     modelCapabilities?: ModelCapabilities;
+    modelMetadata?: ModelMetadata;
     parameterTranslation?: string;
     weight: number;
     timeout: number;
@@ -235,6 +237,7 @@ export type AdminPublicModelChannelInfo = {
     baseUrl: string;
     models: string[];
     modelCapabilities?: ModelCapabilities;
+    modelMetadata?: ModelMetadata;
     weight: number;
     timeout: number;
     enabled: boolean;
@@ -365,7 +368,7 @@ export type AdminChannelActionRequest = {
 };
 
 export async function fetchChannelModels(token: string, payload: AdminChannelActionRequest) {
-    return apiPost<string[]>("/api/admin/settings/channel-models", payload, token);
+    return apiPost<string[] | ChannelModelCatalog>("/api/admin/settings/channel-models", payload, token);
 }
 
 export async function testChannelModel(token: string, payload: AdminChannelActionRequest) {

@@ -1,3 +1,4 @@
+import { openRouterOmniReferences } from "@/lib/openrouter-catalog";
 import { ARK_SEEDANCE_REFERENCE_LIMITS, SEEDANCE_REFERENCE_LIMITS, seedanceVideoReferenceError } from "@/lib/seedance-video";
 import { channelProtocolForConfig, type AiConfig } from "@/stores/use-config-store";
 import type { VideoReferenceInput } from "@/services/api/video";
@@ -7,6 +8,7 @@ export function omniReferenceLimits(config: AiConfig) {
     if (config.videoWorkflowRef) return null;
     const model = config.model || config.videoModel;
     const protocol = channelProtocolForConfig({ ...config, model, videoModel: model });
+    if (protocol === "openrouter" && openRouterOmniReferences(model)) return SEEDANCE_REFERENCE_LIMITS;
     if (!/^doubao-seedance-2-(?:0|5)(?:-|$)/i.test(model) || !["ark", "openai"].includes(protocol)) return null;
     return protocol === "ark" && /seedance-2-5/i.test(model) ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
 }

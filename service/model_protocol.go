@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 const (
 	ModelChannelProtocolOpenAI    = "openai"
+	ModelChannelProtocolOpenRouter = "openrouter"
 	ModelChannelProtocolGrok2API  = "grok2api"
 	ModelChannelProtocolAPIMart   = "apimart"
 	ModelChannelProtocolKIE       = "kie"
@@ -34,7 +36,7 @@ type modelProtocolRule struct {
 }
 
 var modelProtocolRegistry map[string]modelProtocolAdapter
-var modelProtocolIDs = []string{ModelChannelProtocolOpenAI, ModelChannelProtocolGemini, ModelChannelProtocolGrok2API, ModelChannelProtocolMiniMax, ModelChannelProtocolAPIMart, ModelChannelProtocolKIE, ModelChannelProtocolMiMo, ModelChannelProtocol88API, ModelChannelProtocolAutoDL, ModelChannelProtocolArk, ModelChannelProtocolFal, ModelChannelProtocolReplicate, ModelChannelProtocolTokenDance}
+var modelProtocolIDs = []string{ModelChannelProtocolOpenRouter,ModelChannelProtocolOpenAI, ModelChannelProtocolGemini, ModelChannelProtocolGrok2API, ModelChannelProtocolMiniMax, ModelChannelProtocolAPIMart, ModelChannelProtocolKIE, ModelChannelProtocolMiMo, ModelChannelProtocol88API, ModelChannelProtocolAutoDL, ModelChannelProtocolArk, ModelChannelProtocolFal, ModelChannelProtocolReplicate, ModelChannelProtocolTokenDance}
 
 func init() {
 	compatible := modelProtocolAdapter{
@@ -49,6 +51,16 @@ func init() {
 	for _, id := range modelProtocolIDs {
 		modelProtocolRegistry[id] = compatible
 	}
+	openRouter := compatible
+	openRouter.models = func(channel model.ModelChannel) ([]string, error) { catalog, err := FetchOpenRouterCatalog(channel); return catalog.Models, err }
+	openRouter.testModel = func(channel model.ModelChannel, name string) (string, error) {
+		catalog, err := FetchOpenRouterCatalog(channel)
+		if err != nil { return "", err }
+		if _, found := catalog.ModelCapabilities[name]; !found { return "", fmt.Errorf("OpenRouter 当前目录没有此模型") }
+		return "OpenRouter 渠道连接正常，模型已在目录中；实际生成请在创作台验收。", nil
+	}
+	modelProtocolRegistry[ModelChannelProtocolOpenRouter] = openRouter
+
 	gemini := compatible
 	gemini.buildURL = BuildGeminiChannelURL
 	gemini.setAuth = func(request *http.Request, channel model.ModelChannel) {
@@ -152,6 +164,7 @@ func init() {
 
 // 发现模型、配置测试与生成的命中规则不同，分别保留原有优先级。
 var modelDiscoveryRules = []modelProtocolRule{
+	{ModelChannelProtocolOpenRouter, func(channel model.ModelChannel, _ string) bool { return IsOpenRouterChannel(channel) }},
 	{ModelChannelProtocolAutoDL, func(channel model.ModelChannel, _ string) bool { return IsAutoDLChannel(channel) }},
 	{ModelChannelProtocolGemini, func(channel model.ModelChannel, _ string) bool { return IsGeminiChannel(channel) }},
 	{ModelChannelProtocolMiniMax, func(channel model.ModelChannel, _ string) bool { return IsMiniMaxChannel(channel) }},
@@ -165,6 +178,7 @@ var modelDiscoveryRules = []modelProtocolRule{
 }
 
 var modelConfigTestRules = []modelProtocolRule{
+	{ModelChannelProtocolOpenRouter, func(channel model.ModelChannel, _ string) bool { return IsOpenRouterChannel(channel) }},
 	{ModelChannelProtocolAutoDL, func(channel model.ModelChannel, _ string) bool { return IsAutoDLChannel(channel) }},
 	{ModelChannelProtocolMiniMax, func(channel model.ModelChannel, _ string) bool { return IsMiniMaxChannel(channel) }},
 	{ModelChannelProtocol88API, func(channel model.ModelChannel, _ string) bool {
@@ -177,6 +191,7 @@ var modelConfigTestRules = []modelProtocolRule{
 }
 
 var modelGenerationTestRules = []modelProtocolRule{
+	{ModelChannelProtocolOpenRouter, func(channel model.ModelChannel, _ string) bool { return IsOpenRouterChannel(channel) }},
 	{ModelChannelProtocolAutoDL, func(channel model.ModelChannel, _ string) bool { return IsAutoDLChannel(channel) }},
 	{"model:glm-tts", func(_ model.ModelChannel, modelName string) bool {
 		return strings.EqualFold(strings.TrimSpace(modelName), "glm-tts")

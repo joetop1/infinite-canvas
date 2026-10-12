@@ -48,7 +48,8 @@ type aiProtocolAdapter struct {
 // HTTP 混合钩子留在原 handler 包边界，避免 service 反向依赖 handler。
 // 表只初始化一次；每阶段只执行自身钩子，bool 表示停止匹配，不表示字段是否改变。
 var builtinAIProtocols = []aiProtocolAdapter{
-	{id: "openrouter-video", prepare: prepareOpenRouterVideoRequest},
+	{id: "openrouter-image", prepare: prepareOpenRouterImageRequest, path: func(channel model.ModelChannel, _ string, path string) (string, bool) { if service.IsOpenRouterChannel(channel) && (path == "/images/generations" || path == "/images/edits") { return "/images", true }; return path, false }},
+	{id: "openrouter-video", prepare: prepareOpenRouterVideoRequest, videoResponse: func(payload []byte, _ *http.Request, channel model.ModelChannel, _ string, _ bool) ([]byte, bool) { return transformOpenRouterVideoPayload(payload, channel) }},
 	{
 		id: service.ModelChannelProtocolTokenDance,
 		path: func(channel model.ModelChannel, _ string, path string) (string, bool) {

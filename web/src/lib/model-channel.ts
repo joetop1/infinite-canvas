@@ -1,4 +1,5 @@
 export const modelChannelProtocols = [
+    { value: "openrouter", label: "OpenRouter（多媒体）", baseUrl: "https://openrouter.ai/api/v1", apiKeyUrl: "https://openrouter.ai/settings/keys" },
     { value: "openai", label: "OpenAI", baseUrl: "https://api.openai.com" },
     { value: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com" },
     { value: "grok2api", label: "Grok2API", baseUrl: "" },

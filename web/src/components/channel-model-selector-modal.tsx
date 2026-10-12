@@ -1,5 +1,7 @@
 "use client";
 
+import type { ModelMetadata, ChannelModelCatalog } from "@/lib/openrouter-catalog";
+
 import { ReloadOutlined } from "@ant-design/icons";
 import { App, Button, Checkbox, Flex, Input, Modal, Segmented, Space, Tabs, Typography } from "antd";
 import dynamic from "next/dynamic";
@@ -17,14 +19,14 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
 ];
 
 type ChannelModelSelectorModalProps = {
-    channel?: { name?: string; protocol?: string; baseUrl?: string; modelCapabilities?: ModelCapabilities };
+    channel?: { name?: string; protocol?: string; baseUrl?: string; modelCapabilities?: ModelCapabilities; modelMetadata?: ModelMetadata };
     parameterTranslation?: string;
     supportsOnlineSearch?: boolean;
     models: string[];
     sourceModels?: string[];
     onCancel: () => void;
-    onConfirm: (models: string[], modelCapabilities: ModelCapabilities, parameterTranslation: string) => void | Promise<void>;
-    onFetchModels: (query: string) => Promise<string[] | undefined>;
+    onConfirm: (models: string[], modelCapabilities: ModelCapabilities, parameterTranslation: string, modelMetadata: ModelMetadata) => void | Promise<void>;
+    onFetchModels: (query: string) => Promise<string[] | ChannelModelCatalog | undefined>;
     onModelsFetched?: (models: string[]) => void;
 };
 
@@ -42,6 +44,7 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
     const [translation, setTranslation] = useState<string>();
     const [isTranslationOpen, setIsTranslationOpen] = useState(false);
     const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>(() => ({ ...channel?.modelCapabilities }));
+    const [modelMetadata, setModelMetadata] = useState<ModelMetadata>(() => ({ ...channel?.modelMetadata }));
     const isClassifying = activeTab === "classification";
     const groups = useMemo(() => buildModelGroups(source, existing), [source, existing]);
     const activeModels = useMemo(() => {
@@ -59,8 +62,13 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
         setActiveTab("new");
         setFetching(true);
         try {
-            const fetchedModels = await onFetchModels(keyword.trim());
-            if (fetchedModels === undefined) return;
+            const fetched = await onFetchModels(keyword.trim());
+            if (fetched === undefined) return;
+            const fetchedModels = Array.isArray(fetched) ? fetched : fetched.models;
+            if (!Array.isArray(fetched)) {
+                setModelCapabilities((current) => ({ ...fetched.modelCapabilities, ...current }));
+                setModelMetadata((current) => ({ ...current, ...fetched.modelMetadata }));
+            }
             onModelsFetched?.(fetchedModels);
             if (!fetchedModels.length) {
                 message.warning("上游未返回模型列表，请手动输入模型名称");
@@ -102,7 +110,7 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
     const confirm = async () => {
         setSaving(true);
         try {
-            await onConfirm(uniqueModels(selected), modelCapabilities, translation ?? parameterTranslation ?? "");
+            await onConfirm(uniqueModels(selected), modelCapabilities, translation ?? parameterTranslation ?? "", Object.fromEntries(selected.filter((id) => modelMetadata[id]).map((id) => [id, modelMetadata[id]])));
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存渠道配置失败");
         } finally {

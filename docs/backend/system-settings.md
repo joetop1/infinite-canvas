@@ -128,3 +128,7 @@ description: settings 表中 public 和 private 配置结构说明
 | --- | --- | --- |
 | `enabled` | boolean | 是否开启定时同步，默认开启 |
 | `cron` | string | Cron 表达式，默认每天 0 点 |
+
+### OpenRouter 多媒体渠道
+
+协议 `openrouter`，默认地址 `https://openrouter.ai/api/v1`。拉取 `/models`、`/images/models`、`/videos/models`，按输出类型分类；渠道配置的 `modelMetadata` 保存官方模型名称及能力快照。支持文字、图片生成／编辑和异步视频；音频专用模型暂不加入目录。需重新拉取并确认模型以更新快照。

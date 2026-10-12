@@ -47,6 +47,12 @@ func AdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 func AdminChannelModels(w http.ResponseWriter, r *http.Request) {
 	var request adminChannelActionRequest
 	_ = json.NewDecoder(r.Body).Decode(&request)
+	if service.IsOpenRouterChannel(request.Channel) {
+		catalog, err := service.AdminOpenRouterCatalog(request.Index, request.Channel)
+		if err != nil { FailError(w, err); return }
+		OK(w, catalog)
+		return
+	}
 	models, err := service.AdminChannelModels(request.Index, request.Channel, request.Query)
 	if err != nil {
 		FailError(w, err)

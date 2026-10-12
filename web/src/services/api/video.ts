@@ -1,3 +1,5 @@
+import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
+import { openRouterVideoBodyFromInput } from "./protocols/openrouter-media";
 import { videoModelReferenceError } from "@/lib/model-picker-display";
 import axios from "axios";
 import { selectVideoReferenceMode } from "@/lib/video-reference-mode";
@@ -122,7 +124,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
     const input = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references));
-    const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 });
+    const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 }, modelMetadataForConfig(config, model));
     if (referenceError) throw new VideoRequestError(referenceError);
     if (videoChannelProtocol(config, model) === "replicate" && model.split(/[?#:]/)[0].toLowerCase() === "wan-video/wan-2.5-i2v" && (input.references.length + Number(Boolean(input.firstFrame)) !== 1 || input.lastFrame)) {
         throw new VideoRequestError("Replicate Wan 2.5 图生视频只支持一张起始图片，请保留一张参考图或首帧，移除其余图片和尾帧后再生成");
@@ -347,7 +349,7 @@ export async function cacheProtectedVideo(config: AiConfig, model: string, task:
     const url = task.video_url || task.url || "";
     const needs88APIContent = !url && (videoChannelProtocol(config, model) === "88api" || ("object" in task && task.object === "video"));
     // [CUSTOM] OpenAI 兼容渠道（new-api 等）完成任务时只返回 status/progress，视频需另取 /videos/{id}/content
-    const needsOpenAIContent = videoChannelProtocol(config, model) === "openai" && !url;
+    const needsOpenAIContent = ["openai", "openrouter"].includes(videoChannelProtocol(config, model)) && !url;
     const needsGrokContent = isGrok2APIVideoConfig(config, model) && /\/v1\/videos\/[^/]+\/content(?:[?#]|$)/.test(url);
     const needsContentURL = /\/videos\/[^/?]+\/content(?:[?#]|$)/.test(contentRequest ? new URL(url).pathname : url);
     if (!isCompletedVideoStatus(task.status) || task.storageKey || (!contentRequest && !needs88APIContent && !needsGrokContent && !needsOpenAIContent && !needsContentURL)) return task;
@@ -463,6 +465,7 @@ async function create88APIVideoRequestBody(config: AiConfig, model: string, prom
 }
 
 async function createVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>) {
+    if (videoChannelProtocol(config, model) === "openrouter") return openRouterVideoBodyFromInput(config, model, prompt, input);
     if (videoChannelProtocol(config, model) === "autodl") {
         const capabilities = getAutoDLCapabilities(await fetchAutoDLWorkflow(autoDLBaseUrl(config, model), model));
         if (!capabilities) throw new VideoRequestError("当前 AutoDL 工作流尚未适配");
@@ -985,6 +988,12 @@ function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
 }
 
 function unwrapVideoResponseForConfig(config: AiConfig, model: string, payload: ApiVideoResponse) {
+    if (!usesAccountProxy(config) && videoChannelProtocol(config, model) === "openrouter") {
+        const root = payload as unknown as Record<string, unknown>;
+        const status = String(root.status || "queued");
+        const urls = Array.isArray(root.unsigned_urls) ? root.unsigned_urls : [];
+        return normalizeVideoResponse({ id: root.id, object: "video", status, progress: root.progress, model, error: root.error, url: isCompletedVideoStatus(status) ? urls[0] || root.url : undefined, seconds: root.duration == null ? undefined : String(root.duration) });
+    }
     const data = (payload as ApiVideoEnvelope).data;
     if ((payload as VideoResponse).parameter_translation || data && !Array.isArray(data) && data.parameter_translation) return unwrapVideoResponse(payload);
     if (isGeminiVideoModel(model) && isGeminiConfig(config, model)) return normalizeGeminiVideoResponse(payload);
