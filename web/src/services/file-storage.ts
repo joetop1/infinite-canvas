@@ -1,6 +1,7 @@
 "use client";
 
 import localforage from "localforage";
+import { readMediaMetadata } from "@/lib/media-metadata";
 import { nanoid } from "nanoid";
 
 import { deleteAnonymousStorageFile, uploadAnonymousStorageFile } from "@/services/anonymous-storage";
@@ -243,12 +244,7 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
-function readVideoMeta(url: string) {
-    return new Promise<{ width: number; height: number }>((resolve) => {
-        const video = document.createElement("video");
-        const done = () => resolve({ width: video.videoWidth || 1280, height: video.videoHeight || 720 });
-        video.onloadedmetadata = done;
-        video.onerror = done;
-        video.src = url;
-    });
+async function readVideoMeta(url: string) {
+    const metadata = await readMediaMetadata(url, "video").catch(() => null);
+    return { width: metadata?.width || 1280, height: metadata?.height || 720, durationMs: metadata?.durationMs };
 }

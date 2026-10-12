@@ -1,3 +1,4 @@
+import { readMediaMetadata } from "@/lib/media-metadata";
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
 import { openRouterVideoBodyFromInput } from "./protocols/openrouter-media";
 import { videoModelReferenceError } from "@/lib/model-picker-display";
@@ -123,7 +124,12 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
-    const input = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references));
+    const selected = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references), false);
+    const [videos, audios] = await Promise.all([
+        Promise.all(selected.videoReferences.map(async (reference) => ({ ...reference, ...await readMediaMetadata(await resolveMediaUrl(reference.storageKey, reference.url), "video") }))),
+        Promise.all(selected.audioReferences.map(async (reference) => ({ ...reference, ...await readMediaMetadata(await resolveMediaUrl(reference.storageKey, reference.url), "audio") }))),
+    ]);
+    const input = selectVideoReferenceMode(config, { ...selected, videoReferences: videos, audioReferences: audios });
     const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 }, modelMetadataForConfig(config, model));
     if (referenceError) throw new VideoRequestError(referenceError);
     if (videoChannelProtocol(config, model) === "replicate" && model.split(/[?#:]/)[0].toLowerCase() === "wan-video/wan-2.5-i2v" && (input.references.length + Number(Boolean(input.firstFrame)) !== 1 || input.lastFrame)) {

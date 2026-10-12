@@ -13,7 +13,7 @@ export function omniReferenceLimits(config: AiConfig) {
     return protocol === "ark" && /seedance-2-5/i.test(model) ? ARK_SEEDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
 }
 
-export function selectVideoReferenceMode(config: AiConfig, input: Required<VideoReferenceInput>): Required<VideoReferenceInput> {
+export function selectVideoReferenceMode(config: AiConfig, input: Required<VideoReferenceInput>, validate = true): Required<VideoReferenceInput> {
     const limits = omniReferenceLimits(config);
     if (!limits) return input;
     const mode = config.videoReferenceMode || (input.firstFrame || input.lastFrame ? "frames" : "omni");
@@ -22,6 +22,7 @@ export function selectVideoReferenceMode(config: AiConfig, input: Required<Video
         return { ...input, references: [], videoReferences: [], audioReferences: [] };
     }
     const selected = { ...input, firstFrame: null, lastFrame: null };
+    if (!validate) return selected;
     if (config.videoReferenceMode === "omni" && !input.references.length && !input.videoReferences.length) throw new Error("全能参考需要添加参考图片或参考视频");
     if (input.audioReferences.length && !input.references.length && !input.videoReferences.length) throw new Error("参考音频需要同时提供参考图片或参考视频");
     if (input.references.length > limits.images || input.videoReferences.length > limits.videos || input.audioReferences.length > limits.audios) throw new Error(`全能参考最多支持 ${limits.images} 张图片、${limits.videos} 个视频、${limits.audios} 个音频`);

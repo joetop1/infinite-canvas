@@ -86,7 +86,8 @@ export type CanvasNodeMetadata = {
     storageKey?: string;
     mimeType?: string;
     bytes?: number;
-    durationMs?: number;
+    durationMs?: number; // 生成任务耗时（导入素材的旧数据可能存媒体长度）。
+    mediaDurationMs?: number; // 媒体片段的实际长度。
     startedAt?: number;
     progress?: number;
     clientTaskId?: string;

@@ -3328,7 +3328,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     const videoGenerationConfig = workflowRef ? generationConfig : withCanvasVideoAdvancedConfig(generationConfig, generationContext);
                     const frameReferencesEnabled = Boolean(workflowRef) || supportsVideoFrameReferences(videoGenerationConfig.model, channelProtocolForConfig(videoGenerationConfig));
                     const rawVideoInput = { references: frameReferencesEnabled || isAutoDLConfig(videoGenerationConfig) ? generationContext.referenceImages : [...generationContext.referenceImages, ...[generationContext.firstFrame, generationContext.lastFrame].filter((image): image is ReferenceImage => Boolean(image))], firstFrame: frameReferencesEnabled ? generationContext.firstFrame : null, lastFrame: frameReferencesEnabled ? generationContext.lastFrame : null, videoReferences: generationContext.referenceVideos, audioReferences: generationContext.referenceAudios };
-                    const videoInput = workflowRef ? rawVideoInput : selectVideoReferenceMode(videoGenerationConfig, rawVideoInput);
+                    const videoInput = workflowRef ? rawVideoInput : selectVideoReferenceMode(videoGenerationConfig, rawVideoInput, false);
                     const { firstFrame, lastFrame, references: videoReferenceImages } = videoInput;
                     const spec = nodeSizeFromRatio(videoGenerationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
@@ -5221,7 +5221,7 @@ function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
 }
 
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
-    return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs };
+    return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs, mediaDurationMs: video.durationMs };
 }
 
 function buildImportedVideoNode(video: UploadedFile, title: string, center: Position): CanvasNodeData {
@@ -5252,7 +5252,7 @@ function getNextDirectorOutputY(
 }
 
 function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
-    return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
+    return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs, mediaDurationMs: audio.durationMs };
 }
 
 function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {

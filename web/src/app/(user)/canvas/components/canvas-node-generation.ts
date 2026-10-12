@@ -274,7 +274,7 @@ function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
         bytes: node.metadata.bytes,
         width: node.metadata.naturalWidth,
         height: node.metadata.naturalHeight,
-        durationMs: node.metadata.durationMs,
+        durationMs: node.metadata.mediaDurationMs ?? (!node.metadata.startedAt && !node.metadata.videoTaskId && !node.metadata.audioTaskId ? node.metadata.durationMs : undefined),
     };
 }
 
@@ -286,6 +286,6 @@ function readReferenceAudio(node: CanvasNodeData): ReferenceAudio | null {
         type: node.metadata.mimeType || "audio/mpeg",
         url: node.metadata.content,
         storageKey: node.metadata.storageKey,
-        durationMs: node.metadata.durationMs,
+        durationMs: node.metadata.mediaDurationMs ?? (!node.metadata.startedAt && !node.metadata.videoTaskId && !node.metadata.audioTaskId ? node.metadata.durationMs : undefined),
     };
 }
