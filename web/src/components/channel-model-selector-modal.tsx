@@ -1,5 +1,6 @@
 "use client";
 
+import { channelModelIdError } from "@/lib/model-channel";
 import type { ModelMetadata, ChannelModelCatalog } from "@/lib/openrouter-catalog";
 
 import { ReloadOutlined } from "@ant-design/icons";
@@ -110,6 +111,10 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
     const confirm = async () => {
         setSaving(true);
         try {
+            if (!(translation ?? parameterTranslation ?? "").trim()) {
+                const invalid = selected.find((id) => channelModelIdError(channel?.protocol || "", id));
+                if (invalid) throw new Error(`${invalid}：${channelModelIdError(channel?.protocol || "", invalid)}`);
+            }
             await onConfirm(uniqueModels(selected), modelCapabilities, translation ?? parameterTranslation ?? "", Object.fromEntries(selected.filter((id) => modelMetadata[id]).map((id) => [id, modelMetadata[id]])));
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存渠道配置失败");

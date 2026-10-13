@@ -219,3 +219,25 @@ func replicateSearchModelID(raw json.RawMessage) string {
 	}
 	return ""
 }
+
+// NativeChannelModelError rejects provider IDs copied into an incompatible channel.
+// Explicit parameter translations may use aliases and are validated separately.
+func NativeChannelModelError(channel model.ModelChannel, modelName string) string {
+	translated, _ := ParameterTranslationModels(channel.ParameterTranslation)
+	for _, name := range translated {
+		if name == modelName {
+			return ""
+		}
+	}
+	path := strings.Trim(strings.TrimSpace(strings.SplitN(strings.SplitN(strings.SplitN(modelName, "?", 2)[0], "#", 2)[0], ":", 2)[0]), "/")
+	if IsReplicateChannel(channel) {
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(path, " \t\r\n") || strings.HasPrefix(path, "fal-ai/") {
+			return "此模型编号不属于 Replicate，请从该渠道的官方目录重新选择模型"
+		}
+	}
+	if IsFalChannel(channel) && !strings.Contains(path, "/") {
+		return "此模型编号不属于 Fal，请从该渠道的官方目录重新选择模型"
+	}
+	return ""
+}

@@ -58,6 +58,11 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 		if _, err := ParameterTranslationModels(channel.ParameterTranslation); err != nil {
 			return model.Settings{}, fmt.Errorf("渠道 %s：%w", channel.Name, err)
 		}
+		for _, name := range channel.Models {
+			if reason := NativeChannelModelError(channel, name); reason != "" {
+				return model.Settings{}, fmt.Errorf("渠道 %s 的模型 %s：%s", channel.Name, name, reason)
+			}
+		}
 	}
 	if err := validateEnabledStorageProviderTypes(settings.Private.Storage.Providers); err != nil {
 		return model.Settings{}, err
@@ -1128,7 +1133,7 @@ func modelChannelsForModel(channels []model.ModelChannel, modelName string) []mo
 			continue
 		}
 		for _, item := range channel.Models {
-			if strings.TrimSpace(item) == modelName {
+			if strings.TrimSpace(item) == modelName && NativeChannelModelError(channel, modelName) == "" {
 				result = append(result, channel)
 				break
 			}
@@ -1166,7 +1171,15 @@ func publicChannelInfos(channels []model.ModelChannel, availableModels, availabl
 		if !channel.Enabled || channel.BaseURL == "" || len(channel.Models) == 0 {
 			continue
 		}
-		models := append([]string{}, channel.Models...)
+		models := []string{}
+		for _, name := range channel.Models {
+			if NativeChannelModelError(channel, name) == "" {
+				models = append(models, name)
+			}
+		}
+		if len(models) == 0 {
+			continue
+		}
 		if len(availableModels) > 0 {
 			models = filterEnabledModels(models, availableModels)
 			if len(models) == 0 {

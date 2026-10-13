@@ -105,7 +105,7 @@ func SelectUserLocalModelChannelForModel(userID string, modelName string, channe
 				break
 			}
 		}
-		return model.ModelChannel{
+		selected := model.ModelChannel{
 			ID:                   channelID,
 			Protocol:             protocol,
 			Name:                 firstVideoTaskValue(strings.TrimSpace(channel.Name), "本地直连"),
@@ -118,7 +118,11 @@ func SelectUserLocalModelChannelForModel(userID string, modelName string, channe
 			Timeout:              600,
 			Enabled:              true,
 			ParameterTranslation: parameterTranslation,
-		}, nil
+		}
+		if reason := NativeChannelModelError(selected, modelName); reason != "" {
+			return model.ModelChannel{}, errors.New(reason)
+		}
+		return selected, nil
 	}
 	return model.ModelChannel{}, errors.New("本地渠道不存在")
 }

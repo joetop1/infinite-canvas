@@ -1,4 +1,3 @@
-import { mimoTextModels } from "@/lib/mimo-tts";
 import { dataUrlToGeminiInlineData, geminiActionUrl, geminiDirectHeaders, geminiErrorMessage, isGeminiConfig } from "@/lib/gemini";
 import { aiApiUrl, aiHeaders, ImageRequestError, isEventStreamResponse, readJsonServerSentEvents, refreshRemoteUser } from "@/services/api/image";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -199,7 +198,7 @@ async function requestCompletion(config: CanvasAgentAiConfig, systemPrompt: stri
     let rawText = "";
     if (config.textStreaming && response.ok && isEventStreamResponse(response)) {
         let content = "";
-        let reasoningContent = "";
+        let reasoningContent: string | undefined;
         let finishReason = "";
         let usage: ChatCompletionPayload["usage"];
         const toolCalls: Array<{ id?: string; function: { name: string; arguments: string } }> = [];
@@ -215,7 +214,7 @@ async function requestCompletion(config: CanvasAgentAiConfig, systemPrompt: stri
             }> | undefined)?.[0];
             if (!choice) return;
             if (typeof choice.delta?.content === "string") content += choice.delta.content;
-            if (typeof choice.delta?.reasoning_content === "string") reasoningContent += choice.delta.reasoning_content;
+            if (typeof choice.delta?.reasoning_content === "string") reasoningContent = (reasoningContent || "") + choice.delta.reasoning_content;
             if (typeof choice.finish_reason === "string") finishReason = choice.finish_reason;
             for (const fragment of choice.delta?.tool_calls || []) {
                 const index = typeof fragment.index === "number" ? fragment.index : toolCalls.length;
@@ -231,7 +230,7 @@ async function requestCompletion(config: CanvasAgentAiConfig, systemPrompt: stri
             usage,
             choices: [{
                 finish_reason: finishReason,
-                message: { content, reasoning_content: reasoningContent || undefined, tool_calls: toolCalls },
+                message: { content, reasoning_content: reasoningContent, tool_calls: toolCalls },
             }],
         };
     } else {
@@ -251,9 +250,7 @@ async function requestCompletion(config: CanvasAgentAiConfig, systemPrompt: stri
     if (choice?.finish_reason && /^(?:length|content_filter|max_tokens)$/i.test(choice.finish_reason)) {
         throw new CanvasAgentRequestError("文本模型输出未完成：" + choice.finish_reason, response.status);
     }
-    const normalizedModel = config.model.trim().toLowerCase();
-    const preservesReasoningContent = normalizedModel.startsWith("glm-") || mimoTextModels.some((model) => model === normalizedModel);
-    const reasoningContent = preservesReasoningContent && typeof message.reasoning_content === "string" ? message.reasoning_content : undefined;
+    const reasoningContent = typeof message.reasoning_content === "string" ? message.reasoning_content : undefined;
 
     const inputTokens = payload.usage?.prompt_tokens || payload.data?.usage?.prompt_tokens;
     calibrateCanvasAgentTokenEstimate(canvasAgentTokenCalibrationKey(config), { systemPrompt, messages, tools }, inputTokens);

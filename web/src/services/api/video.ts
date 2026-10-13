@@ -1,3 +1,4 @@
+import { channelModelIdError } from "@/lib/model-channel";
 import { readMediaMetadata } from "@/lib/media-metadata";
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
 import { openRouterVideoBodyFromInput } from "./protocols/openrouter-media";
@@ -124,6 +125,9 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
+    const translation = await findParameterTranslation({...config,model});
+    const modelError = channelModelIdError(videoChannelProtocol(config, model), model);
+    if (!translation && modelError) throw new VideoRequestError(modelError);
     const selected = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references), false);
     const [videos, audios] = await Promise.all([
         Promise.all(selected.videoReferences.map(async (reference) => ({ ...reference, ...await readMediaMetadata(await resolveMediaUrl(reference.storageKey, reference.url), "video") }))),
@@ -136,7 +140,6 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         throw new VideoRequestError("Replicate Wan 2.5 图生视频只支持一张起始图片，请保留一张参考图或首帧，移除其余图片和尾帧后再生成");
     }
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
-    const translation = await findParameterTranslation({...config,model});
     if (translation) return createTranslatedVideoTask({...config,model},translation,systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt,input,normalizeVideoTaskCreateOptions(options),onProgress);
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, input);
     const startedAt = Date.now();

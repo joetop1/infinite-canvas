@@ -555,6 +555,9 @@ export function channelIdForActiveModel(config: AiConfig) {
     const selectedChannelId = config.model === config.imageModel ? config.imageChannelId : config.model === config.videoModel ? config.videoChannelId : config.model === config.audioModel ? config.audioChannelId : config.model === config.textModel ? config.textChannelId : "";
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     if (config.activeChannelId && channels.some((channel) => channel.id === config.activeChannelId && channel.models?.includes(config.model))) return config.activeChannelId;
+    if (selectedChannel?.models?.includes(config.model)) return selectedChannelId;
+    const matchingChannel = channels.find((channel) => channel.models?.includes(config.model));
+    if (matchingChannel) return matchingChannel.id || "";
     if (selectedChannel?.protocol === "gemini" || selectedChannel?.protocol === "autodl") return selectedChannelId;
     if (!selectedChannel) {
         const geminiChannel = channels.find((channel) => channel.protocol === "gemini" && (channel.models || []).includes(config.model));

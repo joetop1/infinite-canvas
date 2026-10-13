@@ -38,3 +38,11 @@ export function directAIProviderForProtocol(protocol: string): DirectAIProvider 
 export function isWorkflowProtocol(protocol: string): protocol is "runninghub" | "comfyui" {
     return protocol === "runninghub" || protocol === "comfyui";
 }
+
+// Native provider IDs must not be reused as aliases on a different provider.
+export function channelModelIdError(protocol: string, model: string) {
+    const path = model.trim().split(/[?#:]/)[0].replace(/^\/+|\/+$/g, "");
+    if (protocol === "replicate" && (!/^[^/\s]+\/[^/\s]+$/.test(path) || path.startsWith("fal-ai/"))) return "此模型编号不属于 Replicate，请从该渠道的官方目录重新选择模型";
+    if (protocol === "fal" && !path.includes("/")) return "此模型编号不属于 Fal，请从该渠道的官方目录重新选择模型";
+    return "";
+}
