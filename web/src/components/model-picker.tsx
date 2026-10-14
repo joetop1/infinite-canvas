@@ -1,5 +1,6 @@
 "use client";
 
+import { supportsVideoEditing } from "@/lib/video-editing";
 import { useChannelTranslationStore } from "@/stores/use-channel-translation-store";
 import { channelModelIdError } from "@/lib/model-channel";
 
@@ -25,6 +26,7 @@ type ModelPickerProps = {
     hasImageReferences?: boolean;
     hasVideoReferences?: boolean;
     hasAudioReferences?: boolean;
+    videoEditing?: boolean;
     onChange: (model: string, channelId?: string) => void;
     workflowRef?: WorkflowRef;
     onWorkflowChange?: (ref?: WorkflowRef) => void;
@@ -37,7 +39,7 @@ type ModelPickerProps = {
 type PickerBase = { key: string; channelId?: string; channelName: string; protocol?: string; baseUrl?: string; modelMetadata?: ModelMetadata };
 type PickerOption = (PickerBase & { model: string }) | (PickerBase & { model: ""; workflowRef: WorkflowRef; label: string });
 
-export function ModelPicker({ config, value, channelId, capability, hasImageReferences = false, hasVideoReferences = false, hasAudioReferences = false, onChange, workflowRef, onWorkflowChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, channelId, capability, hasImageReferences = false, hasVideoReferences = false, hasAudioReferences = false, videoEditing = false, onChange, workflowRef, onWorkflowChange, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const token = useUserStore((state) => state.token);
@@ -53,14 +55,14 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
                 ? config.publicChannels.map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "云端渠道", baseUrl: channel.baseUrl, models: channel.models, modelCapabilities: channel.modelCapabilities, modelMetadata: channel.modelMetadata, translatedModels: channel.parameterTranslationModels || [], workflows: channel.workflows || [] }))
                 : normalizeLocalChannels(config).map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "本地渠道", baseUrl: channel.baseUrl, models: channel.models, modelCapabilities: channel.modelCapabilities, modelMetadata: channel.modelMetadata, translatedModels: localTranslations?.[channel.id]?.trim() ? channel.models : [], workflows: channel.workflowSummaries || [] }));
         const classifiedModels = channels.filter((channel) => !isWorkflowProtocol(channel.protocol || "")).flatMap((channel) => filterModelsByCapability(channel.models ?? [], capability, channel.protocol || "", channel.modelCapabilities).filter((model) => channel.translatedModels.includes(model) || !channelModelIdError(channel.protocol || "", model)).map((model) => ({ key: `${channel.id}::${model}`, channelId: channel.id, channelName: channel.name, protocol: channel.protocol, baseUrl: channel.baseUrl, modelMetadata: channel.modelMetadata, model })));
-        const filtered = classifiedModels.filter((item) => capability !== "video" || !videoModelReferenceError(item.model, item.protocol || "", { hasImageReferences, hasVideoReferences, hasAudioReferences }, item.modelMetadata?.[item.model]));
-        if (!workflowEnabled || !token) return filtered;
+        const filtered = classifiedModels.filter((item) => !videoEditing || supportsVideoEditing(item.model, item.protocol || "")).filter((item) => capability !== "video" || !videoModelReferenceError(item.model, item.protocol || "", { hasImageReferences, hasVideoReferences, hasAudioReferences }, item.modelMetadata?.[item.model]));
+        if (videoEditing || !workflowEnabled || !token) return filtered;
         const scope = config.channelMode === "remote" ? "system" : "personal";
         return [...filtered, ...channels.flatMap((channel) => isWorkflowProtocol(channel.protocol || "") ? channel.workflows.filter((entry) => entry.enabled && entry.capability === capability && entry.provider === channel.protocol).map((entry) => {
             const ref: WorkflowRef = { scope, channelId: channel.id || "", kind: entry.kind, workflowId: entry.workflowId };
             return { key: `workflow:${JSON.stringify([ref.scope, ref.channelId, ref.kind, ref.workflowId])}`, channelId: channel.id, channelName: channel.name, protocol: channel.protocol, baseUrl: channel.baseUrl, model: "", workflowRef: ref, label: entry.title || entry.workflowId };
         }) : [])];
-    }, [capability, config, hasImageReferences, hasVideoReferences, hasAudioReferences, localTranslations, token, workflowEnabled]);
+    }, [capability, config, hasImageReferences, hasVideoReferences, hasAudioReferences, localTranslations, token, videoEditing, workflowEnabled]);
     const workflowLabel = useAutoDLWorkflowNames(channelOptions);
     const modelLabel = (model: string, option?: PickerBase | null) => option?.protocol === "autodl" ? workflowLabel(model, option) : capability === "video" ? option?.modelMetadata?.[model]?.name?.replace(/^[^:]+:\s*/, "") || videoModelDisplayName(model) : model;
     const currentOption = useMemo<PickerOption | undefined>(() => {

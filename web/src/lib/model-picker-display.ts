@@ -1,3 +1,4 @@
+import { supportsVideoEditing } from "@/lib/video-editing";
 import { openRouterOmniReferences, type ProviderModelMetadata } from "@/lib/openrouter-catalog";
 import { isFalTextToVideoModel, modelKey, supportsVideoFrameReferences, videoModelSummary } from "@/lib/video-model-capabilities";
 
@@ -5,6 +6,8 @@ export type PickerReferences = { hasImageReferences?: boolean; hasVideoReference
 
 // Display names never replace the provider ID used to submit a request.
 export function videoModelDisplayName(id: string) {
+    const edit = id.match(/^fal-ai\/kling-video\/o3\/(pro|standard)\/video-to-video\/edit$/);
+    if (edit) return `Kling O3 ${edit[1] === "pro" ? "Pro" : "Standard"} · 编辑`;
     const key = modelKey(id.split(/[?#]/)[0]);
     const families: [RegExp, string][] = [
         [/seedance-(\d+)-(\d+)/, "Seedance"], [/seedance-(\d+)(?!\d)/, "Seedance"],
@@ -24,6 +27,7 @@ export function videoModelDisplayName(id: string) {
 
 function videoReferenceSupport(id: string, protocol: string, metadata?: ProviderModelMetadata) {
     const key = modelKey(id);
+    if (supportsVideoEditing(id, protocol)) return { image: true, video: true, audio: false, label: "视频编辑" };
     if (protocol === "openrouter") {
         if (openRouterOmniReferences(id)) return { image: true, video: true, audio: true, label: "全能参考" };
         return { image: metadata?.supported_frame_images?.length ? true : undefined, video: false, audio: false, label: metadata?.supported_frame_images?.includes("last_frame") ? "首尾帧" : metadata?.supported_frame_images?.includes("first_frame") ? "首帧参考" : "参考能力待确认" };
@@ -40,6 +44,7 @@ function videoReferenceSupport(id: string, protocol: string, metadata?: Provider
 }
 
 export function videoModelPickerTags(id: string, protocol: string, metadata?: ProviderModelMetadata) {
+    if (supportsVideoEditing(id, protocol)) return [id.includes("/pro/") ? "1080p" : "720p", "原视频 3–15秒", "保留原声", "视频编辑"];
     const summary = videoModelSummary(id, protocol, metadata);
     const referenceLabel = videoReferenceSupport(id, protocol, metadata).label;
     return summary ? [summary.resolution, summary.duration, !summary.audioKnown ? "音频待确认" : summary.supportsAudio ? "有声" : "无声", referenceLabel] : ["分辨率／时长／音频待确认", referenceLabel];

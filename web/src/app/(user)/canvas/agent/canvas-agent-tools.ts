@@ -26,6 +26,7 @@ export const CANVAS_AGENT_ACTION_NAMES = [
     "generate_image",
     "edit_image",
     "generate_video",
+    "edit_video",
     "generate_audio",
     "get_media_task_status",
 ] as const;
@@ -154,6 +155,12 @@ export const CANVAS_AGENT_TOOLS: CanvasAgentToolDefinition[] = [
         "edit_image",
         "创建图片编辑节点和来源连线，并按 Agent 自动生成设置决定是否提交现有图片编辑链路；必须提供至少一个真实图片来源节点，图片按 sourceNodeIds 顺序编号。",
         { prompt: STRING, title: STRING, sourceNodeIds: STRING_ARRAY, size: STRING, count: { type: "integer", minimum: 1, maximum: 15 } },
+        ["prompt", "sourceNodeIds"],
+    ),
+    defineTool(
+        "edit_video",
+        "创建专用视频编辑节点；必须指定一段已有视频，随后可加最多4张替换物/外观参考图。仅使用已适配的编辑模型，保留原视频和声音，时长跟随原片。模型未配置时返回错误，不得用 generate_video 冒充编辑。",
+        { prompt: STRING, title: STRING, sourceNodeIds: STRING_ARRAY },
         ["prompt", "sourceNodeIds"],
     ),
     defineTool(
@@ -292,6 +299,7 @@ export function normalizeCanvasAgentAction(name: unknown, args: unknown, id = na
             if (actionName === "edit_image" && sourceNodeIds && !sourceNodeIds.length) throw new Error("edit_image 缺少图片来源节点");
             break;
         }
+        case "edit_video":
         case "generate_video": {
             const sourceNodeIds = optionalStringArray(input.sourceNodeIds, "sourceNodeIds");
             const seconds = boundedInteger(input.seconds, -1, 30);
@@ -402,6 +410,7 @@ export function canvasAgentActionLabel(action: CanvasAgentAction) {
         generate_image: "正在创建图片节点",
         edit_image: "正在创建图片编辑节点",
         generate_video: "正在创建视频节点",
+        edit_video: "正在创建视频编辑节点",
         generate_audio: "正在创建音频节点",
         get_media_task_status: "正在读取媒体任务",
     };
@@ -409,7 +418,7 @@ export function canvasAgentActionLabel(action: CanvasAgentAction) {
 }
 
 export function isCanvasAgentMediaAction(action: CanvasAgentAction) {
-    return action.name === "generate_image" || action.name === "edit_image" || action.name === "generate_video" || action.name === "generate_audio";
+    return action.name === "generate_image" || action.name === "edit_image" || action.name === "generate_video" || action.name === "edit_video" || action.name === "generate_audio";
 }
 
 export function userLikelyRequestedCanvasAction(text: string) {

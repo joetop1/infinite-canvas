@@ -1,5 +1,7 @@
 "use client";
 
+import { supportsVideoEditing } from "@/lib/video-editing";
+
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
 
 import { useEffect, useState } from "react";
@@ -68,7 +70,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasVideoImageReferences = mode === "video" && (framesOnly ? Boolean(node.metadata?.firstFrameNodeId || node.metadata?.lastFrameNodeId) : mentionReferences.some((reference) => reference.active && reference.kind === "image") || connectedNodes.some((item) => isCanvasImageNodeType(item.type)) || (!omniLimits && Boolean(node.metadata?.firstFrameNodeId || node.metadata?.lastFrameNodeId)));
     const hasVideoReferences = mode === "video" && !framesOnly && mentionReferences.some((reference) => reference.active && reference.kind === "video");
     const hasAudioReferences = mode === "video" && !framesOnly && mentionReferences.some((reference) => reference.active && reference.kind === "audio");
-    const videoReferenceError = mode === "video" && !node.metadata?.workflowRef ? videoModelReferenceError(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }), { hasImageReferences: hasVideoImageReferences, hasVideoReferences, hasAudioReferences }, modelMetadataForConfig(config, config.model)) : "";
+    const editModelError = node.metadata?.videoEditing && !supportsVideoEditing(config.model, channelProtocolForConfig(config)) ? "请选择已适配的视频编辑模型" : "";
+    const videoReferenceError = editModelError || (mode === "video" && !node.metadata?.workflowRef ? videoModelReferenceError(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }), { hasImageReferences: hasVideoImageReferences, hasVideoReferences, hasAudioReferences }, modelMetadataForConfig(config, config.model)) : "");
     const sourcePrompt = isPanorama ? node.metadata?.panoramaSourcePrompt || "" : node.metadata?.prompt || "";
     const [prompt, setPrompt] = useState(sourcePrompt);
     const [expanded, setExpanded] = useState(false);
@@ -141,7 +144,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         </>
                     ) : mode === "video" ? (
                         <>
-                            <ModelPicker className="!w-[180px] !min-w-0 !shrink-0" config={config} value={config.model} channelId={config.videoChannelId} workflowRef={node.metadata?.workflowRef} onWorkflowChange={(workflowRef) => onConfigChange(node.id, { workflowRef })} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability="video" hasImageReferences={hasVideoImageReferences} hasVideoReferences={hasVideoReferences} hasAudioReferences={hasAudioReferences} onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker className="!w-[180px] !min-w-0 !shrink-0" config={config} value={config.model} channelId={config.videoChannelId} workflowRef={node.metadata?.workflowRef} onWorkflowChange={(workflowRef) => onConfigChange(node.id, { workflowRef })} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability="video" videoEditing={Boolean(node.metadata?.videoEditing)} hasImageReferences={hasVideoImageReferences} hasVideoReferences={hasVideoReferences} hasAudioReferences={hasAudioReferences} onMissingConfig={() => openConfigDialog(true)} />
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !w-[148px] !shrink-0 !justify-start !rounded-full !px-3" frameOptions={videoFrameOptions} resourceOptions={videoResourceOptions} metadata={node.metadata} firstFrameNodeId={node.metadata?.firstFrameNodeId} lastFrameNodeId={node.metadata?.lastFrameNodeId} onFrameChange={(patch) => onConfigChange(node.id, patch)} onMetadataChange={(patch) => onConfigChange(node.id, patch)} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         </>
                     ) : mode === "audio" ? (
@@ -217,6 +220,8 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         size: isPanoramaNodeType(node.type) ? PANORAMA_IMAGE_SIZE : node.metadata?.size || (mode === "video" ? globalConfig.videoSize || defaultConfig.videoSize : globalConfig.size || defaultConfig.size),
         videoSeconds: isAutoDLConfig({ ...globalConfig, activeChannelId, videoChannelId }, node.metadata?.model || defaultModel) ? node.metadata?.seconds ?? globalConfig.videoSeconds : node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
+        videoEditing: node.metadata?.videoEditing,
+        videoKeepAudio: node.metadata?.videoKeepAudio,
         videoMode: node.metadata?.mode || globalConfig.videoMode || defaultConfig.videoMode,
         videoNegativePrompt: node.metadata?.negativePrompt || globalConfig.videoNegativePrompt || defaultConfig.videoNegativePrompt,
         videoMultiShot: node.metadata?.multiShot || globalConfig.videoMultiShot || defaultConfig.videoMultiShot,

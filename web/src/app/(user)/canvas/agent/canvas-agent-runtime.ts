@@ -232,7 +232,7 @@ export async function runCanvasAgent(input: RunCanvasAgentInput): Promise<RunCan
                 return { reply: unsupported, state, protocolMessages: persistCanvasAgentProtocolMessages(protocolMessages), contextCheckpoint, jsonFallbackMode: usedJsonFallbackMode };
             }
             const finalReply = reply || "我已经读取当前画布。请告诉我下一步要继续完善哪一部分。";
-            protocolMessages = [...protocolMessages, { role: "assistant" as const, content: finalReply, ...(turn.responseItems?.length ? { responseItems: turn.responseItems } : {}) }];
+            protocolMessages = [...protocolMessages, { role: "assistant" as const, content: finalReply, ...(turn.reasoningContent !== undefined ? { reasoningContent: turn.reasoningContent } : {}), ...(turn.responseItems?.length ? { responseItems: turn.responseItems } : {}) }];
             return { reply: finalReply, state, protocolMessages: persistCanvasAgentProtocolMessages(protocolMessages), contextCheckpoint, jsonFallbackMode: usedJsonFallbackMode };
         }
 

@@ -48,6 +48,9 @@ func FalModels() []string {
 		"fal-ai/minimax/video-01",
 		"fal-ai/wan/v2.2-a14b/text-to-video",
 		"fal-ai/bytedance/seedance/v1/pro/text-to-video",
+		// 视频编辑
+		"fal-ai/kling-video/o3/pro/video-to-video/edit",
+		"fal-ai/kling-video/o3/standard/video-to-video/edit",
 		// 图生视频
 		"fal-ai/kling-video/v1.5/pro/image-to-video",
 		"fal-ai/minimax/video-01/image-to-video",

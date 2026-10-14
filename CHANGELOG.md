@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.8.1-custom.7
+
++ [新增] 画布视频编辑入口与 Agent 编辑工具，接入 Fal Kling O3 Edit；严格筛选可用编辑模型，按原视频校验素材和参数。
++ [修复] Agent 普通最终回复保留思考字段，避免下一轮对话丢失 reasoning_content。
+
 ## v0.8.1-custom.6
 
 + [修复] 拦截 Replicate／Fal 渠道的错误模型编号，隐藏错配选项，旧节点优先匹配包含该模型的渠道。

@@ -1,3 +1,4 @@
+import { videoEditingOptions } from "@/lib/video-editing";
 import { isGlmTtsModel } from "@/lib/audio-generation";
 import { isGrok2APITtsConfig } from "@/lib/grok-tts";
 import { isGeminiConfig, isGeminiTtsModel } from "@/lib/gemini";
@@ -39,6 +40,7 @@ export type CanvasAgentContext = {
         textModel: string;
         imageModel: string;
         videoModel: string;
+        videoEditingModels: string[];
         audioModel: string;
         imageQuality: string;
         imageSize: string;
@@ -120,6 +122,7 @@ export function buildCanvasAgentContext(input: BuildCanvasAgentContextInput): Ca
             textModel: input.config.textModel || input.config.model,
             imageModel: input.config.imageModel || input.config.model,
             videoModel,
+            videoEditingModels: videoEditingOptions(input.config).map((item) => item.model),
             audioModel,
             imageQuality: input.config.quality,
             imageSize: input.config.size,

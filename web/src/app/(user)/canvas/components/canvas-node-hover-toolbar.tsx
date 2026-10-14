@@ -21,6 +21,7 @@ type CanvasNodeHoverToolbarProps = {
     onInfo: (node: CanvasNodeData) => void;
     onDecreaseFont: (node: CanvasNodeData) => void;
     onIncreaseFont: (node: CanvasNodeData) => void;
+    onEditVideo: (node: CanvasNodeData) => void;
     onToggleDialog: (node: CanvasNodeData) => void;
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
@@ -61,6 +62,7 @@ export function CanvasNodeHoverToolbar({
     onInfo,
     onDecreaseFont,
     onIncreaseFont,
+    onEditVideo,
     onToggleDialog,
     onGenerateImage,
     onUpload,
@@ -178,6 +180,7 @@ export function CanvasNodeHoverToolbar({
             onClick: () => onTrimAudio(node),
         }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasVideo ? [{ id: "editVideo", title: "视频编辑", label: "视频编辑", icon: <Scissors className="size-4" />, onClick: () => onEditVideo(node) }] : []),
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
         ...(isConfig ? [{ id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),

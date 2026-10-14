@@ -37,6 +37,27 @@ func normalizeFalDirectBody(raw []byte, contentType string, modelName string, en
 		out["prompt"] = prompt
 	}
 
+	if endpoint == "/videos" && (spec.ModelPath == "fal-ai/kling-video/o3/pro/video-to-video/edit" || spec.ModelPath == "fal-ai/kling-video/o3/standard/video-to-video/edit") {
+		videos := readDirectReferences(body, "video_reference[]")
+		images := readDirectReferences(body, "input_reference[]")
+		if len(videos) != 1 || len(images) > 4 || len(readDirectReferences(body, "audio_reference[]")) > 0 || len(readDirectReferences(body, "first_frame_url")) > 0 || len(readDirectReferences(body, "last_frame_url")) > 0 {
+			return nil, errors.New("Kling O3 编辑需要一段原视频、最多 4 张参考图，不支持音频或首尾帧输入")
+		}
+		out["video_url"] = videos[0]
+		if len(images) > 0 {
+			out["image_urls"] = images
+		}
+		keepAudio := true
+		if value, ok := body["keep_audio"].(bool); ok {
+			keepAudio = value
+		} else if strings.EqualFold(readDirectString(body["keep_audio"]), "false") {
+			keepAudio = false
+		}
+		out["keep_audio"] = keepAudio
+		// Edit follows the source clip duration; do not send generation-only fields.
+		return json.Marshal(out)
+	}
+
 	switch endpoint {
 	case "/images/generations":
 		if count, ok := readDirectCount(body["n"]); ok {

@@ -62,6 +62,8 @@ export type AiConfig = {
     geminiTtsVoice: string;
     videoSeconds: string;
     videoMode: string;
+    videoEditing?: boolean;
+    videoKeepAudio?: boolean;
     videoReferenceMode?: "omni" | "frames";
     videoNegativePrompt: string;
     videoMultiShot: string;

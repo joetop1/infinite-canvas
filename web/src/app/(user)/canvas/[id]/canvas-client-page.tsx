@@ -15,6 +15,8 @@ import { comfyOutputStorageKey, getWorkflowTask, submitWorkflowTask, workflowMed
 import type { WorkflowRef } from "@/lib/workflow-channel";
 import { channelProtocolForConfig, defaultConfig, resolveModelForCapability, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
+import { readMediaMetadata } from "@/lib/media-metadata";
+import { preferredVideoEditor } from "@/lib/video-editing";
 import { downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -213,7 +215,7 @@ function CanvasRefreshShell() {
     );
 }
 
-function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: CanvasNodeType) => void; onClose: () => void }) {
+function ConnectionCreateMenu({ pending, onCreate, onClose, onVideoEdit }: { pending: PendingConnectionCreate; onCreate: (type: CanvasNodeType) => void; onClose: () => void; onVideoEdit?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div
@@ -234,6 +236,7 @@ function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: Pending
             <div className="grid gap-1">
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本生成" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
+                {onVideoEdit ? <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频编辑" description="编辑原视频，只显示已适配的编辑模型" onClick={onVideoEdit} /> : null}
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频参考" onClick={() => onCreate(CanvasNodeType.Audio)} />
                 <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景图" description="文生全景、图生全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
@@ -907,6 +910,24 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         },
         [message],
     );
+
+    const startVideoEditing = useCallback(async (source: CanvasNodeData, position?: Position) => {
+        try {
+            const editor = preferredVideoEditor(effectiveConfig);
+            if (!editor) throw new Error("没有可用的视频编辑模型，请在 Fal 渠道添加 Kling O3 Pro / Standard Edit 并开放该模型");
+            if (!source.metadata?.content) throw new Error("请先上传或完成原视频");
+            const media = await readMediaMetadata(await resolveMediaUrl(source.metadata.storageKey, source.metadata.content), "video");
+            const next = createCanvasNode(CanvasNodeType.Video, position || { x: source.position.x + source.width + 90, y: source.position.y }, {
+                status: "idle", excludeUpstreamText: true, videoEditing: true, videoKeepAudio: true, model: editor.model, channelId: editor.channelId,
+                prompt: "编辑视频1：仅修改指定内容，保持人物、其他物体、背景、原动作和镜头不变。", seconds: String(Math.ceil(media.durationMs / 1000)), size: `${media.width || 1280}x${media.height || 720}`, generateAudio: "false",
+            });
+            next.title = "视频编辑";
+            setNodes((prev) => [...prev, next]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: source.id, toNodeId: next.id }]);
+            setSelectedNodeIds(new Set([next.id]));
+            setDialogNodeId(next.id);
+        } catch (error) { message.error(error instanceof Error ? error.message : "无法创建视频编辑节点"); }
+    }, [effectiveConfig, message]);
 
     const createConnectedNode = useCallback(
         (type: CanvasNodeType, pending: PendingConnectionCreate) => {
@@ -3342,7 +3363,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         position: isEmptyVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
                         width: isEmptyVideoNode ? sourceNode.width : spec.width,
                         height: isEmptyVideoNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, model: videoGenerationConfig.model, channelId: videoGenerationConfig.videoChannelId || videoGenerationConfig.activeChannelId, workflowRef, size: videoGenerationConfig.size, seconds: videoGenerationConfig.videoSeconds, vquality: videoGenerationConfig.vquality, mode: videoGenerationConfig.videoMode, videoReferenceMode: videoGenerationConfig.videoReferenceMode, negativePrompt: videoGenerationConfig.videoNegativePrompt, multiShot: videoGenerationConfig.videoMultiShot, shotType: videoGenerationConfig.videoShotType, generateAudio: videoGenerationConfig.videoGenerateAudio, characterOrientation: videoGenerationConfig.videoCharacterOrientation, watermark: videoGenerationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages, referenceVideos: videoInput.videoReferences, referenceAudios: videoInput.audioReferences, firstFrame, lastFrame }), firstFrameNodeId: sourceNode?.metadata?.firstFrameNodeId, lastFrameNodeId: sourceNode?.metadata?.lastFrameNodeId, klingImageNodeIds: sourceNode?.metadata?.klingImageNodeIds, klingMultiPrompt: sourceNode?.metadata?.klingMultiPrompt, klingElementList: sourceNode?.metadata?.klingElementList, startedAt: generationStartedAt, progress: 0, clientTaskId, videoTaskId: clientTaskId },
+                        metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, model: videoGenerationConfig.model, channelId: videoGenerationConfig.videoChannelId || videoGenerationConfig.activeChannelId, workflowRef, size: videoGenerationConfig.size, seconds: videoGenerationConfig.videoSeconds, vquality: videoGenerationConfig.vquality, mode: videoGenerationConfig.videoMode, videoReferenceMode: videoGenerationConfig.videoReferenceMode, videoEditing: videoGenerationConfig.videoEditing, videoKeepAudio: videoGenerationConfig.videoKeepAudio, negativePrompt: videoGenerationConfig.videoNegativePrompt, multiShot: videoGenerationConfig.videoMultiShot, shotType: videoGenerationConfig.videoShotType, generateAudio: videoGenerationConfig.videoGenerateAudio, characterOrientation: videoGenerationConfig.videoCharacterOrientation, watermark: videoGenerationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages, referenceVideos: videoInput.videoReferences, referenceAudios: videoInput.audioReferences, firstFrame, lastFrame }), firstFrameNodeId: sourceNode?.metadata?.firstFrameNodeId, lastFrameNodeId: sourceNode?.metadata?.lastFrameNodeId, klingImageNodeIds: sourceNode?.metadata?.klingImageNodeIds, klingMultiPrompt: sourceNode?.metadata?.klingMultiPrompt, klingElementList: sourceNode?.metadata?.klingElementList, startedAt: generationStartedAt, progress: 0, clientTaskId, videoTaskId: clientTaskId },
                     };
                     pendingChildIds = [videoId];
                     setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
@@ -3794,8 +3815,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     return { ok: true, arrangedNodeIds: targetNodes.map((node) => node.id) };
                 }
 
-                if (action.name === "generate_image" || action.name === "edit_image" || action.name === "generate_video" || action.name === "generate_audio") {
-                    const mode: CanvasNodeGenerationMode = action.name === "generate_video" ? "video" : action.name === "generate_audio" ? "audio" : "image";
+                if (action.name === "generate_image" || action.name === "edit_image" || action.name === "generate_video" || action.name === "edit_video" || action.name === "generate_audio") {
+                    const editing = action.name === "edit_video";
+                    const mode: CanvasNodeGenerationMode = action.name === "generate_video" || editing ? "video" : action.name === "generate_audio" ? "audio" : "image";
                     const targetType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
                     const sourceNodeIds = Object.prototype.hasOwnProperty.call(args, "sourceNodeIds")
                         ? stringValues("sourceNodeIds")
@@ -3807,8 +3829,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         return { ok: false, code: "image_reference_required", message: "图片编辑需要至少一个已有内容的图片节点" };
                     }
 
-                    const generationConfig = buildGenerationConfig(agentEffectiveConfig, undefined, mode);
-                    const agentWorkflowRef = mode === "image" ? agentEffectiveConfig.imageWorkflowRef : mode === "video" ? agentEffectiveConfig.videoWorkflowRef : agentEffectiveConfig.audioWorkflowRef;
+                    const editor = editing ? preferredVideoEditor(agentEffectiveConfig) : undefined;
+                    if (editing && !editor) return { ok: false, code: "video_editor_not_configured", message: "没有可用的视频编辑模型，请在 Fal 渠道开放 Kling O3 Pro / Standard Edit，不能用参考生成冒充编辑" };
+                    const sourceVideo = sourceNodes.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.content);
+                    if (editing && (sourceVideo.length !== 1 || sourceNodes.some((node) => node.type === CanvasNodeType.Audio))) return { ok: false, code: "video_edit_source_required", message: "视频编辑必须指定一段已有内容的原视频，可以另附最多 4 张参考图" };
+                    let generationConfig = buildGenerationConfig(agentEffectiveConfig, undefined, mode);
+                    if (editor) generationConfig = { ...generationConfig, model: editor.model, videoModel: editor.model, activeChannelId: editor.channelId, videoChannelId: editor.channelId, videoEditing: true, videoKeepAudio: true, videoGenerateAudio: "false", videoWorkflowRef: undefined };
+                    const agentWorkflowRef = editing ? undefined : mode === "image" ? agentEffectiveConfig.imageWorkflowRef : mode === "video" ? agentEffectiveConfig.videoWorkflowRef : agentEffectiveConfig.audioWorkflowRef;
                     if (!agentWorkflowRef && (!generationConfig.model || !isAiConfigReady(generationConfig, generationConfig.model))) {
                         return { ok: false, code: "model_not_configured", message: "请先在全局配置中完成" + (mode === "video" ? "视频" : mode === "audio" ? "音频" : "图片") + "模型配置" };
                     }
@@ -3828,12 +3855,14 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         metadata.quality = generationConfig.quality;
                         metadata.count = typeof args.count === "number" ? Math.max(1, Math.floor(args.count)) : 1;
                     }
+                    if (editing) { metadata.videoEditing = true; metadata.videoKeepAudio = true; }
                     if (mode === "video") {
                         metadata.vquality = generationConfig.vquality;
-                        const seconds = typeof args.seconds === "number" ? args.seconds : Number(generationConfig.videoSeconds);
-                        const durationError = agentWorkflowRef ? "" : validateCanvasAgentVideoSeconds(generationConfig.model, seconds);
+                        const sourceMedia = editing ? await readMediaMetadata(await resolveMediaUrl(sourceVideo[0].metadata?.storageKey, sourceVideo[0].metadata!.content!), "video") : undefined;
+                        const seconds = sourceMedia ? Math.ceil(sourceMedia.durationMs / 1000) : typeof args.seconds === "number" ? args.seconds : Number(generationConfig.videoSeconds);
+                        const durationError = editing || agentWorkflowRef ? "" : validateCanvasAgentVideoSeconds(generationConfig.model, seconds);
                         if (durationError) return { ok: false, code: "unsupported_duration", message: durationError, supported: canvasAgentVideoDurationHint(generationConfig.model) };
-                        const generateAudio = typeof args.generateAudio === "boolean" ? args.generateAudio : generationConfig.videoGenerateAudio === "true";
+                        const generateAudio = editing ? false : typeof args.generateAudio === "boolean" ? args.generateAudio : generationConfig.videoGenerateAudio === "true";
                         if (!agentWorkflowRef && generateAudio && !supportsVideoAudioGeneration(generationConfig.model)) {
                             return { ok: false, code: "video_audio_not_supported", message: "当前全局视频模型不支持视频原生声音" };
                         }
@@ -4447,7 +4476,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             <rect width="100%" height="100%" fill={theme.canvas.selectionFill} stroke={theme.canvas.selectionStroke} strokeWidth={1.5 / viewport.k} strokeDasharray={`${10 / viewport.k} ${6 / viewport.k}`} />
                         </svg>
                     ) : null}
-                    {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
+                    {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onVideoEdit={nodes.find((node) => node.id === pendingConnectionCreate.connection.nodeId)?.type === CanvasNodeType.Video ? () => { const source = nodesRef.current.find((node) => node.id === pendingConnectionCreate.connection.nodeId); if (source) void startVideoEditing(source, pendingConnectionCreate.position); cancelPendingConnectionCreate(); } : undefined} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
                     {nodeCreatePosition ? (
                         <NodeCreateMenu
                             position={nodeCreatePosition}
@@ -4494,6 +4523,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     onInfo={(node) => setInfoNodeId(node.id)}
                     onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
                     onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
+                    onEditVideo={(node) => void startVideoEditing(node)}
                     onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
@@ -5876,6 +5906,9 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoMode: node?.metadata?.mode || config.videoMode || defaultConfig.videoMode,
         videoReferenceMode: node?.metadata?.videoReferenceMode,
+        videoWorkflowRef: node?.metadata?.videoEditing ? undefined : config.videoWorkflowRef,
+        videoEditing: node?.metadata?.videoEditing,
+        videoKeepAudio: node?.metadata?.videoKeepAudio,
         videoNegativePrompt: node?.metadata?.negativePrompt || config.videoNegativePrompt || defaultConfig.videoNegativePrompt,
         videoMultiShot: node?.metadata?.multiShot || config.videoMultiShot || defaultConfig.videoMultiShot,
         videoShotType: node?.metadata?.shotType || config.videoShotType || defaultConfig.videoShotType,

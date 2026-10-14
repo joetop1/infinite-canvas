@@ -1,3 +1,4 @@
+import { supportsVideoEditing, videoEditingInputError, videoEditingPrompt } from "@/lib/video-editing";
 import { channelModelIdError } from "@/lib/model-channel";
 import { readMediaMetadata } from "@/lib/media-metadata";
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
@@ -128,12 +129,18 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const translation = await findParameterTranslation({...config,model});
     const modelError = channelModelIdError(videoChannelProtocol(config, model), model);
     if (!translation && modelError) throw new VideoRequestError(modelError);
+    if (config.videoEditing && !supportsVideoEditing(model, videoChannelProtocol(config, model))) throw new VideoRequestError("此模型未适配视频编辑，请选择编辑列表中的模型");
     const selected = selectVideoReferenceMode(config, normalizeVideoReferenceInput(references), false);
     const [videos, audios] = await Promise.all([
         Promise.all(selected.videoReferences.map(async (reference) => ({ ...reference, ...await readMediaMetadata(await resolveMediaUrl(reference.storageKey, reference.url), "video") }))),
         Promise.all(selected.audioReferences.map(async (reference) => ({ ...reference, ...await readMediaMetadata(await resolveMediaUrl(reference.storageKey, reference.url), "audio") }))),
     ]);
     const input = selectVideoReferenceMode(config, { ...selected, videoReferences: videos, audioReferences: audios });
+    if (config.videoEditing || supportsVideoEditing(model, videoChannelProtocol(config, model))) {
+        const editError = videoEditingInputError(input);
+        if (editError) throw new VideoRequestError(editError);
+        config = { ...config, videoSeconds: String(Math.ceil(input.videoReferences[0].durationMs! / 1000)) };
+    }
     const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 }, modelMetadataForConfig(config, model));
     if (referenceError) throw new VideoRequestError(referenceError);
     if (videoChannelProtocol(config, model) === "replicate" && model.split(/[?#:]/)[0].toLowerCase() === "wan-video/wan-2.5-i2v" && (input.references.length + Number(Boolean(input.firstFrame)) !== 1 || input.lastFrame)) {
@@ -474,6 +481,15 @@ async function create88APIVideoRequestBody(config: AiConfig, model: string, prom
 }
 
 async function createVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>) {
+    if (supportsVideoEditing(model, videoChannelProtocol(config, model))) {
+        const { autoDLReferenceURL } = await import("./direct-ai");
+        return {
+            model, prompt: videoEditingPrompt(prompt), seconds: config.videoSeconds,
+            "video_reference[]": [await autoDLReferenceURL(input.videoReferences[0], "Kling O3 编辑")],
+            "input_reference[]": await Promise.all(input.references.map((reference) => autoDLReferenceURL(reference, "Kling O3 编辑"))),
+            keep_audio: config.videoKeepAudio !== false,
+        };
+    }
     if (videoChannelProtocol(config, model) === "openrouter") return openRouterVideoBodyFromInput(config, model, prompt, input);
     if (videoChannelProtocol(config, model) === "autodl") {
         const capabilities = getAutoDLCapabilities(await fetchAutoDLWorkflow(autoDLBaseUrl(config, model), model));

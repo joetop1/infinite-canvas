@@ -71,7 +71,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, frameOption
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={buttonIcon || <Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
                     <span className="truncate">
-                        {!visualOnly && metadata?.videoReferenceMode ? <>{metadata.videoReferenceMode === "omni" ? "全能参考" : "首尾帧"} · </> : null}{videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}
+                        {config.videoEditing ? "视频编辑 · " : null}{!visualOnly && metadata?.videoReferenceMode ? <>{metadata.videoReferenceMode === "omni" ? "全能参考" : "首尾帧"} · </> : null}{videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}
                         {visualOnly ? null : <> · {videoSecondsLabel(config.videoSeconds)}</>}
                     </span>
                 </Button>
@@ -96,7 +96,7 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
     const kieKlingOmni = kieKlingOmniVariant(config, model);
     const isKlingMotionControl = isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model) || (channelProtocolForConfig({ ...config, model, videoModel: model }) === "tokendance" && modelKey(model) === "kling-3-0");
     const isKlingV3 = isAPIMartKlingV3 || isKIEKlingV3;
-    const frameReferencesEnabled = !isKlingV3 && supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model }));
+    const frameReferencesEnabled = !config.videoEditing && !isKlingV3 && supportsVideoFrameReferences(model, channelProtocolForConfig({ ...config, model }));
     const omniLimits = !visualOnly && onMetadataChange ? omniReferenceLimits(config) : null;
     const referenceMode = metadata?.videoReferenceMode || (firstFrameNodeId || lastFrameNodeId ? "frames" : "omni");
     const optionIds = useMemo(() => new Set(frameOptions.map((item) => item.nodeId)), [frameOptions]);
@@ -124,7 +124,10 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
                         </div>
                     </CanvasSettingGroup>
                 ) : null}
-                <VideoSettingsPanel config={config} modelName={visualOnly ? config.videoModel || config.model : undefined} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="space-y-4" hideNegativePrompt={isKlingV3} visualOnly={visualOnly} />
+                {config.videoEditing ? <>
+                    <div className="text-sm leading-6" style={{ color: theme.node.muted }}>编辑原视频，时长跟随原片。原片需为 3–15 秒，支持最多 4 张参考图。输出为 {config.model.includes("/pro/") ? "1080p" : "720p"}；不支持首尾帧或参考音频。</div>
+                    <div className="flex items-center justify-between text-sm"><span>保留原视频声音</span><Switch checked={metadata?.videoKeepAudio !== false} onChange={(value) => onMetadataChange?.({ videoKeepAudio: value })} /></div>
+                </> : <VideoSettingsPanel config={config} modelName={visualOnly ? config.videoModel || config.model : undefined} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="space-y-4" hideNegativePrompt={isKlingV3} visualOnly={visualOnly} />}
             </div>
         </div>,
         document.body,
