@@ -36,6 +36,9 @@ func normalizeFalDirectBody(raw []byte, contentType string, modelName string, en
 	if prompt := readDirectString(body["prompt"]); prompt != "" {
 		out["prompt"] = prompt
 	}
+	if endpoint == "/videos" && spec.ModelPath == "minimax/h3-max/reference-to-video" {
+		return normalizeFalH3MaxBody(body, spec, out)
+	}
 
 	if endpoint == "/videos" && (spec.ModelPath == "fal-ai/kling-video/o3/pro/video-to-video/edit" || spec.ModelPath == "fal-ai/kling-video/o3/standard/video-to-video/edit") {
 		videos := readDirectReferences(body, "video_reference[]")

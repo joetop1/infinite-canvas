@@ -28,6 +28,7 @@ export function videoModelDisplayName(id: string) {
 function videoReferenceSupport(id: string, protocol: string, metadata?: ProviderModelMetadata) {
     const key = modelKey(id);
     if (supportsVideoEditing(id, protocol)) return { image: true, video: true, audio: false, label: "视频编辑" };
+    if (protocol === "fal" && id.split(/[?#]/)[0] === "minimax/h3-max/reference-to-video") return { image: true, video: true, audio: true, label: "全能参考" };
     if (protocol === "openrouter") {
         if (openRouterOmniReferences(id)) return { image: true, video: true, audio: true, label: "全能参考" };
         return { image: metadata?.supported_frame_images?.length ? true : undefined, video: false, audio: false, label: metadata?.supported_frame_images?.includes("last_frame") ? "首尾帧" : metadata?.supported_frame_images?.includes("first_frame") ? "首帧参考" : "参考能力待确认" };

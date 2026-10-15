@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- MiniMax H3 Max（Fal，minimax/h3-max/reference-to-video）：按官方 Schema 将图片、视频、音频写入 reference_image_urls／reference_video_urls／reference_audio_urls 数组，首尾帧另传；duration 改为数值，resolution 使用 480P／768P／1080P，并补齐 prompt_expansion_mode。前后端拦截无参考素材或数量超限，前端读取真实音视频时长后检查 2–15 秒／合计 15 秒。选择器显示全能参考，清晰度与时长按此端点联动。需验收画布／工作台、单份与混合素材、个人直连与账号渠道；未运行自动测试或付费生成。
+
 - custom.13 发布核对：从服务器只读加载本次失败分镜的存储记录，按相同 SigV4 GET 规则生成 24 小时链接；场景图 2116689 字节、参考视频 26981545 字节的 Range GET 均返回 HTTP 206 且读取到实际文件字节。此项仅核对存储交付，不代表上游生成已验收，也未触发推理。
 
 - v0.8.1-custom.13：Seedance 原生 content 与 MainAPIs/New API 的 metadata.content 在幂等提交回调内，将本站图片、视频、音频（含首尾帧）的存储引用转换为对应 S3/R2 对象的 GET 限时链接，有效期 24 小时；不改素材用途和原始文件，不向 Fal 转存。读取对象所属存储配置，支持用户自定义存储；签名链接用 Range GET 检查能否读取，再调用模型。失败明确拒绝并返还提交预扣，不自动重发付费任务。需验收本次新分镜的视频参考、图片首尾帧、音频参考、断线重试与外部直链；未运行自动测试或付费生成。

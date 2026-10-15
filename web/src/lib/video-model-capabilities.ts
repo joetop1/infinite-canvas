@@ -127,6 +127,7 @@ export type VideoModelProfile = {
     maxSeconds: number;
     durationOptions?: string[];
     supportsAudio: boolean;
+    audioToggle?: boolean;
     audioKnown?: boolean;
 };
 
@@ -141,6 +142,10 @@ export function videoModelProfile(modelName: string, protocol = "", metadata?: P
     }
     const model = modelName.trim().toLowerCase().split(/[?#]/)[0].replace(/[._/]+/g, "-");
     if (!model) return null;
+
+    if (protocol === "fal" && model === "minimax-h3-max-reference-to-video") {
+        return { resolutions: ["480", "768", "1080"], defaultResolution: "768", minSeconds: 1, maxSeconds: 15, supportsAudio: true, audioToggle: false };
+    }
 
     if (model.includes("seedance-2-5")) {
         const sample480 = model.includes("480p") || model.includes("480");

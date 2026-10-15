@@ -143,6 +143,14 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     }
     const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 }, modelMetadataForConfig(config, model));
     if (referenceError) throw new VideoRequestError(referenceError);
+    if (videoChannelProtocol(config, model) === "fal" && model.split(/[?#]/)[0] === "minimax/h3-max/reference-to-video") {
+        const count = input.references.length + input.videoReferences.length + input.audioReferences.length;
+        if (!count) throw new VideoRequestError("MiniMax H3 Max 全能参考需要至少一份参考素材，首尾帧不能代替参考素材");
+        if (input.references.length > 9 || input.videoReferences.length > 3 || input.audioReferences.length > 3 || count > 12) throw new VideoRequestError("MiniMax H3 Max 最多 9 张图片、3 段视频、3 段音频，总计不超过 12 份");
+        for (const [label, items] of [["参考视频", input.videoReferences], ["参考音频", input.audioReferences]] as const) {
+            if (items.some((item) => !item.durationMs || item.durationMs < 2000 || item.durationMs > 15000) || items.reduce((sum, item) => sum + (item.durationMs || 0), 0) > 15000) throw new VideoRequestError(`MiniMax H3 Max ${label}每段须为 2–15 秒，合计不超过 15 秒`);
+        }
+    }
     if (videoChannelProtocol(config, model) === "replicate" && model.split(/[?#:]/)[0].toLowerCase() === "wan-video/wan-2.5-i2v" && (input.references.length + Number(Boolean(input.firstFrame)) !== 1 || input.lastFrame)) {
         throw new VideoRequestError("Replicate Wan 2.5 图生视频只支持一张起始图片，请保留一张参考图或首帧，移除其余图片和尾帧后再生成");
     }

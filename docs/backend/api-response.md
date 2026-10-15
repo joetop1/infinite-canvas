@@ -5,6 +5,12 @@ description: 业务接口统一响应结构与前端处理约定
 
 # 接口响应约定
 
+## Fal MiniMax H3 Max 全能参考
+
+- `minimax/h3-max/reference-to-video` 的普通参考素材使用 `reference_image_urls`、`reference_video_urls`、`reference_audio_urls` 数组，单份输入也保持数组；`image_url` 和 `end_image_url` 只用于明确指定的首尾帧，不能把普通参考图片当作首帧。
+- 至少一份普通参考，最多 9 图／3 视频／3 音频，总计 12 份；`duration` 为 0.92–15 秒的数值，清晰度为 `480P`／`768P`／`1080P`，旧的 720p 选择映射到原生 768P，默认 `prompt_expansion_mode=balanced`。原生音频不提供独立开关，界面不显示无效的声音开关。
+- 参数错误在调用模型前返回；具体参考素材参数按 [Fal 官方 Schema](https://fal.ai/models/minimax/h3-max/reference-to-video/api) 适配，不套用通用单数素材字段。
+
 ## Seedance 参考素材交付
 
 - Seedance 原生 `content` 和 MainAPIs/New API `metadata.content` 的本站图片、视频和音频引用，在持久化任务的幂等提交回调内转换为其 S3/R2 存储对象的预签名 GET 链接，有效期 24 小时；保留 `role`、顺序及其他生成参数，不更改外部直链。
