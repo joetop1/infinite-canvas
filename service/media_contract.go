@@ -204,9 +204,6 @@ func fetchMediaContract(ctx context.Context, channel model.ModelChannel, name st
 	var endpoint, inputRef string
 	if IsFalChannel(channel) {
 		endpoint = "https://fal.ai/api/openapi/queue/openapi.json?" + url.Values{"endpoint_id": {path}}.Encode()
-		if strings.TrimSpace(channel.APIKey) != "" {
-			endpoint = "https://api.fal.ai/v1/models?" + url.Values{"endpoint_id": {path}, "expand": {"openapi-3.0"}}.Encode()
-		}
 	} else {
 		parts := strings.SplitN(path, ":", 2)
 		endpoint = BuildModelChannelURL(channel, "/models/"+parts[0])

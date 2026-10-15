@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- custom.14 已发布并部署，线上 Fal 47 个模型同步完成。发现目录扩展规范对 minimax/h3-max/reference-to-video 返回旧路径 /fal-ai/minimax-h3-turbo/reference-to-video；custom.15 改为读取该端点公开官方 OpenAPI，且不发送 API Key。待重新同步并核对 H3 输入绑定。未提交付费生成。
+
 - v0.8.1-custom.14：新增按渠道启用的统一模型规范。Fal 从官方 OpenAPI、Replicate 从对应版本 Schema 同步；服务端使用 JSON Schema 库校验，前端共享能力描述并联动视频参数，未知必填字段或未核对参考视频限制的模型标为待适配，禁止提交。管理员先同步所选模型，再开启统一适配；默认不开启，保留现有渠道行为。统一适配与自定义参数转译互斥。Replicate 固定提交到读取规范的版本；参考素材匿名 Range GET 检查失败时不调用推理。原生 Seedance 2.0 使用本地核对规范，2.5 暂不启用严格模式。已完成后端及前端生产构建；未运行测试或付费推理，构建不等于全量 TypeScript 检查。待验收规范同步、按渠道开启、画布/工作台参数联动、无效参数和素材拦截、重启缓存恢复。
 
 - MiniMax H3 Max（Fal，minimax/h3-max/reference-to-video）：按官方 Schema 将图片、视频、音频写入 reference_image_urls／reference_video_urls／reference_audio_urls 数组，首尾帧另传；duration 改为数值，resolution 使用 480P／768P／1080P，并补齐 prompt_expansion_mode。前后端拦截无参考素材或数量超限，前端读取真实音视频时长后检查 2–15 秒／合计 15 秒。选择器显示全能参考，清晰度与时长按此端点联动。需验收画布／工作台、单份与混合素材、个人直连与账号渠道；未运行自动测试或付费生成。
