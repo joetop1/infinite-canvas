@@ -23,12 +23,12 @@ type SerializedDirectBody = { body: unknown; references: DirectReference[] };
 const DIRECT_REFERENCE_HOST = "direct-reference.invalid";
 const DIRECT_IMAGE_POLL_INTERVAL_MS = 2000;
 
-export async function autoDLReferenceURL(reference: ReferenceImage | ReferenceVideo | ReferenceAudio, providerName = "AutoDL") {
+export async function autoDLReferenceURL(reference: ReferenceImage | ReferenceVideo | ReferenceAudio, providerName = "AutoDL", allowServerContent = false) {
     for (const value of [reference.url, "dataUrl" in reference ? reference.dataUrl : ""]) {
-        const url = publicReferenceURL(value);
+        const url = publicReferenceURL(value, allowServerContent);
         if (url) return url;
     }
-    const storedUrl = await storedReferenceURL(reference.storageKey);
+    const storedUrl = await storedReferenceURL(reference.storageKey, allowServerContent);
     if (storedUrl) return storedUrl;
     if (reference.storageKey?.startsWith("server:")) throw new Error(`${providerName} 参考素材需要云存储提供可公开访问的地址`);
     const source = "dataUrl" in reference
@@ -36,18 +36,22 @@ export async function autoDLReferenceURL(reference: ReferenceImage | ReferenceVi
         : await resolveMediaUrl(reference.storageKey, reference.url);
     if (!source) throw new Error("参考素材不可用");
     const uploaded = await uploadRemoteMediaToServer(source, reference.name || "reference");
-    const url = publicReferenceURL(uploaded.url) || await storedReferenceURL(uploaded.storageKey);
+    const url = publicReferenceURL(uploaded.url, allowServerContent) || await storedReferenceURL(uploaded.storageKey, allowServerContent);
     if (!url) throw new Error(`${providerName} 参考素材需要云存储提供可公开访问的地址`);
     return url;
 }
 
-async function storedReferenceURL(storageKey?: string) {
+async function storedReferenceURL(storageKey?: string, allowServerContent = false) {
     if (!storageKey?.startsWith("server:") || storageKey.startsWith("server:webdav:")) return "";
     const info = await getStorageObjectInfo(storageKey.slice("server:".length));
-    return publicReferenceURL(info.publicUrl);
+    return publicReferenceURL(info.publicUrl) || (allowServerContent && !info.direct
+        ? publicReferenceURL(`/api/files/${encodeURIComponent(info.id)}/content`, true) : "");
 }
 
-function publicReferenceURL(value?: string) {
+function publicReferenceURL(value?: string, allowServerContent = false) {
+    if (allowServerContent && value && /^\/api\/files\/[^/?#]+\/content$/.test(value) && typeof window !== "undefined") {
+        value = new URL(value, window.location.origin).href;
+    }
     if (!value || !/^https?:\/\//i.test(value)) return "";
     try {
         const url = new URL(value);

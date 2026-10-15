@@ -485,8 +485,8 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
         const { autoDLReferenceURL } = await import("./direct-ai");
         return {
             model, prompt: videoEditingPrompt(prompt), seconds: config.videoSeconds,
-            "video_reference[]": [await autoDLReferenceURL(input.videoReferences[0], "Kling O3 编辑")],
-            "input_reference[]": await Promise.all(input.references.map((reference) => autoDLReferenceURL(reference, "Kling O3 编辑"))),
+            "video_reference[]": [await autoDLReferenceURL(input.videoReferences[0], "Kling O3 编辑", true)],
+            "input_reference[]": await Promise.all(input.references.map((reference) => autoDLReferenceURL(reference, "Kling O3 编辑", true))),
             keep_audio: config.videoKeepAudio !== false,
         };
     }
