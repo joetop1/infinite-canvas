@@ -17,7 +17,7 @@ import (
 )
 
 // StageFalEditMedia transfers this site's stored inputs to Fal before inference.
-func StageFalEditMedia(ctx context.Context, channel model.ModelChannel, modelName, siteHost string, body []byte) ([]byte, error) {
+func StageFalEditMedia(ctx context.Context, channel model.ModelChannel, modelName string, siteHosts []string, body []byte) ([]byte, error) {
 	if !IsFalChannel(channel) || (modelName != "fal-ai/kling-video/o3/pro/video-to-video/edit" && modelName != "fal-ai/kling-video/o3/standard/video-to-video/edit") {
 		return body, nil
 	}
@@ -29,11 +29,23 @@ func StageFalEditMedia(ctx context.Context, channel model.ModelChannel, modelNam
 	defer cancel()
 	stage := func(value string) (string, error) {
 		u, err := url.Parse(value)
-		if err != nil || !strings.EqualFold(u.Host, siteHost) || u.RawQuery != "" {
+		if err != nil || u.Host == "" || u.RawQuery != "" {
 			return value, nil
 		}
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) != 4 || parts[0] != "api" || parts[1] != "files" || parts[3] != "content" {
+			return value, nil
+		}
+		matchesSite := false
+		for _, host := range siteHosts {
+			for _, candidate := range strings.Split(host, ",") {
+				matchesSite = matchesSite || strings.EqualFold(u.Host, strings.TrimSpace(candidate))
+			}
+		}
+		if !matchesSite {
+			if _, err := StorageObjectInfo(parts[2]); err == nil {
+				return "", fmt.Errorf("本站素材域名识别失败，尚未提交模型，请刷新网页后重试")
+			}
 			return value, nil
 		}
 		upstream, err := url.Parse(channel.BaseURL)

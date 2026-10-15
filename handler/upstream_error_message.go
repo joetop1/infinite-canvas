@@ -29,14 +29,16 @@ func readUpstreamDetailMessage(raw json.RawMessage) string {
 		return ""
 	}
 	messages := make([]string, 0, len(items))
+	seen := map[string]bool{}
 	for _, item := range items {
 		message := firstNonEmpty(readUpstreamErrorText(item["msg"]), readUpstreamErrorText(item["message"]))
 		if message == "" {
 			// 校验错误常常只有 type + loc，例如 {"type":"missing","loc":["body","prompt"]}
 			message = joinUpstreamErrorDetail(readUpstreamErrorText(item["type"]), readUpstreamErrorLoc(item["loc"]))
 		}
-		if message != "" {
+		if message != "" && !seen[message] {
 			messages = append(messages, message)
+			seen[message] = true
 		}
 		if len(messages) == 3 {
 			break

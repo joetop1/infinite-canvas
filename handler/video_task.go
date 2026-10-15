@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -144,8 +145,13 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 		Fingerprint: hex.EncodeToString(fingerprint[:]), Seconds: seconds, Size: size,
 		RequestBody: logContext.RequestBody, BillingPath: upstreamPath, Credits: credits,
 	}, func(ctx context.Context) (service.VideoSubmission, error) {
-		siteHost := firstNonEmpty(r.Header.Get("X-Forwarded-Host"), r.Host)
-		stagedBody, err := service.StageFalEditMedia(ctx, channel, modelName, siteHost, body)
+		siteHosts := []string{r.Host, r.Header.Get("X-Forwarded-Host")}
+		for _, value := range []string{r.Header.Get("Origin"), r.Referer()} {
+			if origin, parseErr := url.Parse(value); parseErr == nil && (origin.Scheme == "https" || origin.Scheme == "http") && origin.Host != "" {
+				siteHosts = append(siteHosts, origin.Host)
+			}
+		}
+		stagedBody, err := service.StageFalEditMedia(ctx, channel, modelName, siteHosts, body)
 		if err != nil {
 			saveAIProxyLog(logContext, 0, "", err.Error())
 			return service.VideoSubmission{Rejected: true, Error: err.Error(), ErrorDetail: err.Error()}, nil
