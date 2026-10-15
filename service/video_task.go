@@ -254,9 +254,9 @@ func runVideoTaskPoller() {
 				waitForNextVideoTaskPoll()
 				continue
 			}
-			pendingVideoSubmissions, pendingSubmissionErr := repository.HasPendingVideoSubmissions()
-			if pendingSubmissionErr != nil {
-				log.Printf("check pending video submissions failed err=%v", pendingSubmissionErr)
+			pendingVideoTasks, pendingTaskErr := repository.HasPendingVideoTasks()
+			if pendingTaskErr != nil {
+				log.Printf("check pending video tasks failed err=%v", pendingTaskErr)
 			}
 			workflowTasks, workflowErr := repository.ListDueRunningHubWorkflowTasks(workflowCursorCreatedAt, workflowCursorID, runningHubWorkflowPageSize)
 			if workflowErr == nil && len(workflowTasks) == 0 && workflowCursorCreatedAt != "" {
@@ -280,8 +280,8 @@ func runVideoTaskPoller() {
 			if audioErr != nil {
 				log.Printf("check active canvas audio tasks failed err=%v", audioErr)
 			}
-			if len(tasks) == 0 && len(workflowTasks) == 0 && !pendingVideoSubmissions && !hasComfyTasks && !hasComfyCleanup && !hasImageTasks && !hasAudioTasks {
-				if workflowErr != nil || pendingSubmissionErr != nil || comfyErr != nil || cleanupErr != nil || imageErr != nil || audioErr != nil {
+			if len(tasks) == 0 && len(workflowTasks) == 0 && !pendingVideoTasks && !hasComfyTasks && !hasComfyCleanup && !hasImageTasks && !hasAudioTasks {
+				if workflowErr != nil || pendingTaskErr != nil || comfyErr != nil || cleanupErr != nil || imageErr != nil || audioErr != nil {
 					waitForNextVideoTaskPoll()
 					continue
 				}
@@ -397,7 +397,6 @@ func UpdateVideoTaskFromPoll(task model.VideoTask, update VideoTaskPollUpdate) e
 			task.NextPollAt = videoTaskTime(current.Add(time.Duration(1<<min(task.PollFailures-1, 5)) * 5 * time.Second))
 		}
 	} else {
-		task.PollFailures = 0
 		task.NextPollAt = ""
 		task.ErrorDetail = strings.TrimSpace(update.ErrorDetail)
 		if update.Error != "" {
@@ -416,6 +415,7 @@ func UpdateVideoTaskFromPoll(task model.VideoTask, update VideoTaskPollUpdate) e
 				task.NextPollAt = videoTaskTime(current.Add(time.Duration(1<<min(task.PollFailures-1, 5)) * 5 * time.Second))
 			}
 		} else {
+			task.PollFailures = 0
 			task.Status = NormalizeVideoTaskStatus(firstVideoTaskValue(update.Status, task.Status))
 			if task.Status == "" {
 				task.Status = "processing"

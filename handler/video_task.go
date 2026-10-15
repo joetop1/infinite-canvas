@@ -144,6 +144,14 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 		Fingerprint: hex.EncodeToString(fingerprint[:]), Seconds: seconds, Size: size,
 		RequestBody: logContext.RequestBody, BillingPath: upstreamPath, Credits: credits,
 	}, func(ctx context.Context) (service.VideoSubmission, error) {
+		siteHost := firstNonEmpty(r.Header.Get("X-Forwarded-Host"), r.Host)
+		stagedBody, err := service.StageFalEditMedia(ctx, channel, modelName, siteHost, body)
+		if err != nil {
+			saveAIProxyLog(logContext, 0, "", err.Error())
+			return service.VideoSubmission{Rejected: true, Error: err.Error(), ErrorDetail: err.Error()}, nil
+		}
+		body = stagedBody
+		logContext.RequestBody = summarizeAIRequest(body, contentType)
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 		if err != nil {
 			return service.VideoSubmission{}, err

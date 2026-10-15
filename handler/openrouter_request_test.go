@@ -69,7 +69,7 @@ func TestFalVideoUsesReturnedResultURL(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			protocolScript(t, []protocolStep{{"GET", test.target, 200, `{"video":{"url":"https://media.invalid/video.mp4"}}`}})
-			got, message := fetchFalVideoURL(request, channel, map[string]any{"response_url": test.responseURL})
+			got, message, _ := fetchFalVideoURL(request, channel, map[string]any{"response_url": test.responseURL})
 			if got != "https://media.invalid/video.mp4" || message != "" {
 				t.Fatalf("url=%q error=%q", got, message)
 			}

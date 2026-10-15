@@ -323,8 +323,11 @@ func transformFalVideoStatusResponse(payload []byte, request *http.Request, chan
 		if message := readFalQueueError(root); message != "" {
 			return marshalDirectMap(map[string]any{"status": "failed", "error": message})
 		}
-		videoURL, message := fetchFalVideoURL(request, channel, root)
+		videoURL, message, resultStatus := fetchFalVideoURL(request, channel, root)
 		if message != "" {
+			if resultStatus >= 400 && resultStatus < 500 && resultStatus != http.StatusRequestTimeout && resultStatus != http.StatusTooManyRequests {
+				return marshalDirectMap(map[string]any{"status": "failed", "error": message, "error_detail": message})
+			}
 			return marshalDirectMap(map[string]any{"status": "processing", "phase": "retrieving", "error_detail": message})
 		}
 		return marshalDirectMap(map[string]any{"status": "completed", "progress": 100, "video_url": videoURL, "url": videoURL})
@@ -336,29 +339,33 @@ func transformFalVideoStatusResponse(payload []byte, request *http.Request, chan
 }
 
 // fetchFalVideoURL 状态端点只说"完成了"，产物要去结果端点取。
-func fetchFalVideoURL(request *http.Request, channel model.ModelChannel, root map[string]any) (string, string) {
+func fetchFalVideoURL(request *http.Request, channel model.ModelChannel, root map[string]any) (string, string, int) {
 	if request == nil || request.URL == nil {
-		return "", "Fal 任务缺少查询地址"
+		return "", "Fal 任务缺少查询地址", 400
 	}
 	statusURL := *request.URL
 	statusURL.RawQuery = ""
 	statusTarget := statusURL.String()
 	if !strings.HasSuffix(statusTarget, "/status") {
-		return "", "Fal 任务查询地址异常，无法获取生成结果"
+		return "", "Fal 任务查询地址异常，无法获取生成结果", 400
 	}
 	target := firstNonEmpty(sameHostQueueURL(readDirectStringField(root, "response_url"), channel), strings.TrimSuffix(statusTarget, "/status"))
 	payload, status, err := directQueueGET(request, channel, target)
 	if err != nil {
-		return "", err.Error()
+		return "", err.Error(), 0
 	}
 	if status >= http.StatusBadRequest {
-		return "", readUpstreamAIErrorMessage(payload, status)
+		message := readUpstreamAIErrorMessage(payload, status)
+		if strings.Contains(string(payload), "file_download_error") {
+			message = "Fal 无法下载参考素材，请检查素材的公开访问地址：" + message
+		}
+		return "", message, status
 	}
 	videoURL := firstNonEmpty(readDirectMediaURLs(payload, falVideoURLKeys)...)
 	if videoURL == "" {
-		return "", "Fal 视频任务已完成但没有返回视频地址"
+		return "", "Fal 视频任务已完成但没有返回视频地址", status
 	}
-	return videoURL, ""
+	return videoURL, "", status
 }
 
 func readFalVideoError(payload []byte, channel model.ModelChannel, _ string, status bool) string {

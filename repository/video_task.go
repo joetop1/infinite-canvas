@@ -188,13 +188,16 @@ func ListDueVideoTasks(limit int) ([]model.VideoTask, error) {
 	return tasks, err
 }
 
-func HasPendingVideoSubmissions() (bool, error) {
+func HasPendingVideoTasks() (bool, error) {
 	db, err := DB()
 	if err != nil {
 		return false, err
 	}
 	var count int64
-	err = db.Model(&model.VideoTask{}).Where("phase = ?", model.GenerationSubmitting).Count(&count).Error
+	err = db.Model(&model.VideoTask{}).
+		Where("status IN ?", []string{"queued", "in_progress", "processing", "running"}).
+		Where("(phase = '' OR phase IS NULL OR phase NOT IN ?)", []string{model.GenerationUncertain, model.GenerationRecovery}).
+		Where("(workflow_ref = '' OR workflow_ref IS NULL)").Count(&count).Error
 	return count > 0, err
 }
 
