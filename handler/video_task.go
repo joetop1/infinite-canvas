@@ -157,6 +157,11 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 			return service.VideoSubmission{Rejected: true, Error: err.Error(), ErrorDetail: err.Error()}, nil
 		}
 		body = stagedBody
+		body, err = service.StageSeedanceVideoMedia(ctx, modelName, siteHosts, body)
+		if err != nil {
+			saveAIProxyLog(logContext, 0, "", err.Error())
+			return service.VideoSubmission{Rejected: true, Error: err.Error(), ErrorDetail: err.Error()}, nil
+		}
 		logContext.RequestBody = summarizeAIRequest(body, contentType)
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 		if err != nil {
