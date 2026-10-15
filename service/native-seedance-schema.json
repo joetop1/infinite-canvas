@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["content", "duration", "resolution", "ratio"],
+  "properties": {
+    "duration": {"anyOf": [{"const": -1}, {"type": "integer", "minimum": 4, "maximum": 15}]},
+    "resolution": {"type": "string", "enum": ["480p", "720p", "1080p"]},
+    "ratio": {"type": "string", "enum": ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]},
+    "generate_audio": {"type": "boolean"},
+    "watermark": {"type": "boolean"},
+    "content": {"type": "array", "minItems": 1, "maxItems": 13, "items": {"oneOf": [
+      {"type": "object", "required": ["type", "text"], "properties": {"type": {"const": "text"}, "text": {"type": "string", "minLength": 1}}},
+      {"type": "object", "required": ["type", "image_url", "role"], "properties": {"type": {"const": "image_url"}, "role": {"enum": ["reference_image", "first_frame", "last_frame"]}, "image_url": {"$ref": "#/$defs/media"}}},
+      {"type": "object", "required": ["type", "video_url", "role"], "properties": {"type": {"const": "video_url"}, "role": {"const": "reference_video"}, "video_url": {"$ref": "#/$defs/media"}}},
+      {"type": "object", "required": ["type", "audio_url", "role"], "properties": {"type": {"const": "audio_url"}, "role": {"const": "reference_audio"}, "audio_url": {"$ref": "#/$defs/media"}}}
+    ]}}
+  },
+  "$defs": {"media": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "minLength": 1}}}}
+}

@@ -1,0 +1,19 @@
+{
+  "minimax/h3-max/reference-to-video": {
+    "nativeAudio": true,
+    "maxReferences": 12,
+    "referenceMinSeconds": 2,
+    "referenceMaxSeconds": 15,
+    "referenceTotalSeconds": 15
+  },
+  "fal-ai/kling-video/o3/pro/video-to-video/edit": {
+    "referenceMinSeconds": 3,
+    "referenceMaxSeconds": 15,
+    "referenceTotalSeconds": 15
+  },
+  "fal-ai/kling-video/o3/standard/video-to-video/edit": {
+    "referenceMinSeconds": 3,
+    "referenceMaxSeconds": 15,
+    "referenceTotalSeconds": 15
+  }
+}

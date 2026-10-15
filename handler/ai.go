@@ -152,6 +152,7 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		credits *= float64(readAIRequestCount(body, contentType, false))
 	}
+	if channel.StrictContracts && strings.TrimSpace(channel.ParameterTranslation) != "" { Fail(w, "统一模型适配不能与自定义参数转译混用，请使用独立渠道"); return }
 	if serveParameterTranslation(w, r, body, path, channel, user, credits, startedAt) {
 		return
 	}
@@ -178,6 +179,7 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	body, contentType, upstreamPath = prepared.body, prepared.contentType, prepared.path
+	if strings.HasPrefix(path, "/images/") { if err := service.CheckMediaContractAccess(ctx, channel, modelName, body); err != nil { Fail(w, err.Error()); return } }
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, service.BuildModelChannelURL(channel, upstreamPath), bytes.NewReader(body))
 	if err != nil {
 		log.Printf("AI proxy build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, upstreamPath), err)

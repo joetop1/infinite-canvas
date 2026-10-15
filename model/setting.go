@@ -15,6 +15,7 @@ const (
 
 // ModelChannel 模型渠道配置。
 type ModelChannel struct {
+	StrictContracts bool `json:"strictContracts,omitempty"`
 	ID           string          `json:"id"`
 	Protocol     string          `json:"protocol"`
 	Name         string          `json:"name"`
@@ -117,6 +118,7 @@ type SystemPromptSetting struct {
 }
 
 type PublicModelChannelInfo struct {
+	StrictContracts bool `json:"strictContracts,omitempty"`
 	ParameterTranslationModels []string          `json:"parameterTranslationModels,omitempty"`
 	ID                         string            `json:"id"`
 	Protocol                   string            `json:"protocol"`

@@ -102,6 +102,7 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		credits *= float64(readAIRequestCount(body, contentType, true))
 	}
+	if channel.StrictContracts && strings.TrimSpace(channel.ParameterTranslation) != "" { Fail(w, "统一模型适配不能与自定义参数转译混用，请使用独立渠道"); return }
 	if serveParameterTranslationVideo(w, r, body, channel, userChannelID, user, credits, startedAt) {
 		return
 	}
@@ -163,6 +164,10 @@ func proxyAIVideoTaskRequest(w http.ResponseWriter, r *http.Request) {
 			return service.VideoSubmission{Rejected: true, Error: err.Error(), ErrorDetail: err.Error()}, nil
 		}
 		logContext.RequestBody = summarizeAIRequest(body, contentType)
+		if err := service.CheckMediaContractAccess(ctx, channel, modelName, body); err != nil {
+			saveAIProxyLog(logContext, 0, "", err.Error())
+			return service.VideoSubmission{Rejected: true, Error: err.Error(), ErrorDetail: err.Error()}, nil
+		}
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 		if err != nil {
 			return service.VideoSubmission{}, err

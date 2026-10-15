@@ -13,6 +13,7 @@ import type { AdminPublicSettings } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type LocalModelChannel = {
+    strictContracts?: boolean;
     id: string;
     protocol: ModelChannelProtocol;
     name: string;
@@ -99,7 +100,7 @@ export type AiConfig = {
         workflowAgent: string;
     };
     localChannels: LocalModelChannel[];
-    publicChannels: Array<{ id?: string; protocol?: LocalModelChannel["protocol"]; name?: string; baseUrl?: string; models?: string[]; modelCapabilities?: ModelCapabilities; modelMetadata?: ModelMetadata; parameterTranslationModels?: string[]; workflows?: WorkflowSummary[]; weight?: number; timeout?: number; enabled?: boolean; remark?: string }>;
+    publicChannels: Array<{ strictContracts?: boolean; id?: string; protocol?: LocalModelChannel["protocol"]; name?: string; baseUrl?: string; models?: string[]; modelCapabilities?: ModelCapabilities; modelMetadata?: ModelMetadata; parameterTranslationModels?: string[]; workflows?: WorkflowSummary[]; weight?: number; timeout?: number; enabled?: boolean; remark?: string }>;
     syncStorageConfig: boolean;
     syncWebDAVStorageConfig: boolean;
     activeChannelId: string;
@@ -538,6 +539,7 @@ export function normalizeLocalChannels(config: Partial<AiConfig>): LocalModelCha
         models: Array.isArray(channel.models) ? channel.models.filter(Boolean) : [],
         modelCapabilities: channel.modelCapabilities || {},
         modelMetadata: channel.modelMetadata || {},
+        strictContracts: channel.strictContracts === true,
         ...(isWorkflowProtocol(channel.protocol || "") ? {
             uploadApiKey: channel.uploadApiKey || "",
             bridgeId: channel.bridgeId || "",

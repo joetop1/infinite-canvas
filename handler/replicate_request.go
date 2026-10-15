@@ -102,7 +102,13 @@ func prepareReplicateRequest(input aiProtocolRequest) (aiProtocolRequest, bool, 
 		return input, false, nil
 	}
 	input.failureLabel = "Replicate"
-	body, err := normalizeReplicateDirectBody(input.body, input.contentType, input.modelName, input.endpoint)
+	var body []byte
+	var err error
+	if input.channel.StrictContracts {
+		body, err = normalizeContractDirectBody(input)
+	} else {
+		body, err = normalizeReplicateDirectBody(input.body, input.contentType, input.modelName, input.endpoint)
+	}
 	if err != nil {
 		return input, true, err
 	}

@@ -28,10 +28,11 @@ type ChannelModelSelectorModalProps = {
     onCancel: () => void;
     onConfirm: (models: string[], modelCapabilities: ModelCapabilities, parameterTranslation: string, modelMetadata: ModelMetadata) => void | Promise<void>;
     onFetchModels: (query: string) => Promise<string[] | ChannelModelCatalog | undefined>;
+    onSyncContracts?: (models: string[]) => Promise<ChannelModelCatalog | undefined>;
     onModelsFetched?: (models: string[]) => void;
 };
 
-export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = false, parameterTranslation, models, sourceModels = [], onCancel, onConfirm, onFetchModels, onModelsFetched }: ChannelModelSelectorModalProps) {
+export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = false, parameterTranslation, models, sourceModels = [], onCancel, onConfirm, onFetchModels, onModelsFetched, onSyncContracts }: ChannelModelSelectorModalProps) {
     const { message } = App.useApp();
     const modelLabel = useAutoDLWorkflowNames(channel ? [channel] : []);
     const [source, setSource] = useState(() => uniqueModels(sourceModels));
@@ -42,6 +43,7 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
     const [activeTab, setActiveTab] = useState<ModelSelectTabKey | "classification">("current");
     const [fetching, setFetching] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [translation, setTranslation] = useState<string>();
     const [isTranslationOpen, setIsTranslationOpen] = useState(false);
     const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilities>(() => ({ ...channel?.modelCapabilities }));
@@ -108,6 +110,19 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
         const active = new Set(activeModels);
         setSelected((current) => current.filter((model) => !active.has(model)));
     };
+    const syncContracts = async () => {
+        if (!onSyncContracts || !selected.length) return;
+        setSyncing(true);
+        try {
+            const catalog = await onSyncContracts(selected);
+            if (!catalog) return;
+            setModelMetadata((current) => ({ ...current, ...catalog.modelMetadata }));
+            setModelCapabilities((current) => ({ ...current, ...catalog.modelCapabilities }));
+            const ready = Object.values(catalog.modelMetadata).filter((item) => item.generation_contract?.status === "ready").length;
+            message.info(`规范同步完成：${ready} 个已适配，${selected.length - ready} 个待适配`);
+        } catch (error) { message.error(error instanceof Error ? error.message : "同步模型规范失败"); }
+        finally { setSyncing(false); }
+    };
     const confirm = async () => {
         setSaving(true);
         try {
@@ -140,7 +155,7 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
             footer={
                 <Space>
                     <Button onClick={onCancel}>取消</Button>
-                    <Button type="primary" loading={saving} onClick={() => void confirm()}>
+                    <Button type="primary" loading={saving} disabled={syncing} onClick={() => void confirm()}>
                         确定
                     </Button>
                 </Space>
@@ -181,6 +196,7 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
                         当前列表已选择 {activeSelectedCount} / {activeModels.length}
                     </Typography.Text>
                     <Space size={8}>
+                        {onSyncContracts ? <Button size="small" loading={syncing} disabled={!selected.length} onClick={() => void syncContracts()}>同步所选模型规范</Button> : null}
                         <Button size="small" type={isClassifying ? "primary" : "default"} disabled={!selected.length} onClick={() => { setActiveTab("classification"); setKeyword(""); }}>
                             模型分类设置
                         </Button>
@@ -214,6 +230,7 @@ export function ChannelModelSelectorModal({ channel, supportsOnlineSearch = fals
                             ) : (
                                 <Checkbox key={model} checked={selected.includes(model)} onChange={(event) => toggleModel(model, event.target.checked)}>
                                     <Typography.Text title={model} style={{ wordBreak: "break-all" }}>{modelLabel(model, channel)}</Typography.Text>
+                                    {modelMetadata[model]?.generation_contract ? <Typography.Text type="secondary" title={modelMetadata[model].generation_contract?.reason}> · {modelMetadata[model].generation_contract?.status === "ready" ? "已适配" : "待适配"}</Typography.Text> : null}
                                 </Checkbox>
                             ))}
                         </div>

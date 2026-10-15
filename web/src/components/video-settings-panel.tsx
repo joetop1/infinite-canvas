@@ -1,8 +1,8 @@
 "use client";
 
-import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
+import { modelMetadataForConfig, type MediaContract } from "@/lib/openrouter-catalog";
 
-import { type CSSProperties, type ReactNode } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { Input, Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
@@ -51,6 +51,8 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
     const model = modelName || config.model || config.videoModel;
     const autodl = isAutoDLConfig(config, model);
     const { data: workflow } = useAutoDLWorkflow(config, model);
+    const contract = modelMetadataForConfig(config, model)?.generation_contract;
+    if (contract?.status === "ready") return <ContractVideoSettings config={config} contract={contract} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} visualOnly={visualOnly} />;
     if (isAPIMartKlingV26Config(config, modelName || config.model || config.videoModel) || isAPIMartKlingV3Config(config, modelName || config.model || config.videoModel) || isKIEKlingV3Config(config, modelName || config.model || config.videoModel)) {
         return <KlingV26VideoSettingsPanel config={config} modelName={modelName} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} hideNegativePrompt={hideNegativePrompt} visualOnly={visualOnly} />;
     }
@@ -254,6 +256,27 @@ function KlingV26VideoSettingsPanel({ config, modelName, onConfigChange, theme, 
             </div>
         </ImageSettingsTheme>
     );
+}
+
+function ContractVideoSettings({ config, contract, onConfigChange, theme, showTitle, className, visualOnly }: VideoSettingsPanelProps & { contract: MediaContract }) {
+    const fields = contract.bindings || {};
+    const resolutions = fields.resolution?.values?.map(String) || (fields.resolution?.default ? [String(fields.resolution.default)] : []);
+    const durations = fields.duration?.values?.map(String) || [];
+    const ratios = fields.ratio?.values?.map(String) || [];
+    const normalized = (value: string) => value.toLowerCase().replace(/p$/, "");
+    useEffect(() => {
+        if (resolutions.length && !resolutions.some((value) => normalized(value) === normalized(config.vquality))) onConfigChange("vquality", String(fields.resolution?.default ?? resolutions[0]));
+        const seconds = Number(config.videoSeconds);
+        if (fields.duration && (durations.length ? !durations.includes(config.videoSeconds) : !Number.isFinite(seconds) || seconds < (fields.duration.min ?? 0) || seconds > (fields.duration.max ?? Infinity))) onConfigChange("videoSeconds", String(fields.duration.default ?? durations[0] ?? fields.duration.min ?? 5));
+    }, [config.videoSeconds, config.vquality, contract, onConfigChange]);
+    return <ImageSettingsTheme theme={theme}><div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+        {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+        {resolutions.length ? <SettingGroup title="清晰度" color={theme.node.muted}><div className="flex flex-wrap gap-2.5">{resolutions.map((value) => <OptionPill key={value} selected={normalized(value) === normalized(config.vquality)} theme={theme} onClick={() => onConfigChange("vquality", value)}>{/k$/i.test(value) ? value.toUpperCase() : `${normalized(value)}p`}</OptionPill>)}</div></SettingGroup> : <div className="text-sm" style={{ color: theme.node.muted }}>清晰度由模型决定</div>}
+        {ratios.length ? <SettingGroup title="比例" color={theme.node.muted}><div className="flex flex-wrap gap-2.5">{ratios.map((value) => <OptionPill key={value} selected={value === normalizeSeedanceRatio(config.size) || value === "auto" && config.size === "auto"} theme={theme} onClick={() => onConfigChange("size", value === "adaptive" ? "auto" : value)}>{value === "auto" || value === "adaptive" ? "自适应" : value}</OptionPill>)}</div></SettingGroup> : null}
+        {!visualOnly && fields.duration ? <SettingGroup title="生成时长" color={theme.node.muted}>{durations.length ? <div className="flex flex-wrap gap-2.5">{durations.map((value) => <OptionPill key={value} selected={config.videoSeconds === value} theme={theme} onClick={() => onConfigChange("videoSeconds", value)}>{value}s</OptionPill>)}</div> : <NumberInput value={config.videoSeconds} min={fields.duration.min ?? Number(fields.duration.default || 5)} max={fields.duration.max ?? Number(fields.duration.default || 5)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />}</SettingGroup> : null}
+        {!visualOnly && fields.audio ? <AudioGenerationSetting checked={boolConfig(config.videoGenerateAudio, Boolean(fields.audio.default))} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : contract.nativeAudio ? <div className="text-sm" style={{ color: theme.node.muted }}>该模型原生生成声音</div> : null}
+        {contract.maxReferences ? <div className="text-xs" style={{ color: theme.node.muted }}>参考素材合计最多 {contract.maxReferences} 份{contract.referenceTotalSeconds ? `，参考视频总时长最多 ${contract.referenceTotalSeconds} 秒` : ""}</div> : null}
+    </div></ImageSettingsTheme>;
 }
 
 function SeedanceVideoSettingsPanel({ config, modelName, onConfigChange, theme, showTitle, className, visualOnly }: VideoSettingsPanelProps) {

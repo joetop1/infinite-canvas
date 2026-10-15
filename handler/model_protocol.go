@@ -397,6 +397,7 @@ var builtinAIProtocols = []aiProtocolAdapter{
 			if !service.IsReplicateChannel(channel) {
 				return path, false
 			}
+			if channel.StrictContracts && isReplicateEndpoint(path) { return "/predictions", true }
 			return replicateUpstreamPath(modelName, path)
 		},
 		prepare: prepareReplicateRequest,
@@ -452,10 +453,12 @@ func prepareAIProtocolRequest(input aiProtocolRequest) (aiProtocolRequest, strin
 		var stop bool
 		var err error
 		input, stop, err = adapter.prepare(input)
+		if err == nil && stop && input.endpoint == "/videos" { err = service.ValidateNativeSeedanceContract(input.channel, input.modelName, input.body) }
 		if err != nil || stop {
 			return input, adapter.id, err
 		}
 	}
+	if input.endpoint == "/videos" { return input, "", service.ValidateNativeSeedanceContract(input.channel, input.modelName, input.body) }
 	return input, "", nil
 }
 

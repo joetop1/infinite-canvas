@@ -1,4 +1,5 @@
 import { supportsVideoEditing } from "@/lib/video-editing";
+import { mediaContractError, mediaContractReferences } from "@/lib/media-contract";
 import { openRouterOmniReferences, type ProviderModelMetadata } from "@/lib/openrouter-catalog";
 import { isFalTextToVideoModel, modelKey, supportsVideoFrameReferences, videoModelSummary } from "@/lib/video-model-capabilities";
 
@@ -26,6 +27,11 @@ export function videoModelDisplayName(id: string) {
 }
 
 function videoReferenceSupport(id: string, protocol: string, metadata?: ProviderModelMetadata) {
+    const contract = metadata?.generation_contract;
+    if (contract) {
+        const fields = contract.bindings || {};
+        return { image: Boolean(fields.images || fields.first_frame), video: Boolean(fields.videos), audio: Boolean(fields.audios), label: fields.videos && fields.images ? "多媒体参考" : fields.images ? "图片参考" : "文生视频" };
+    }
     const key = modelKey(id);
     if (supportsVideoEditing(id, protocol)) return { image: true, video: true, audio: false, label: "视频编辑" };
     if (protocol === "fal" && id.split(/[?#]/)[0] === "minimax/h3-max/reference-to-video") return { image: true, video: true, audio: true, label: "全能参考" };
@@ -45,6 +51,8 @@ function videoReferenceSupport(id: string, protocol: string, metadata?: Provider
 }
 
 export function videoModelPickerTags(id: string, protocol: string, metadata?: ProviderModelMetadata) {
+    const contract = metadata?.generation_contract;
+    if (contract && contract.status !== "ready") return [contract.status === "syncing" ? "规范同步中" : "待适配", contract.reason || "暂不可生成"];
     if (supportsVideoEditing(id, protocol)) return [id.includes("/pro/") ? "1080p" : "720p", "原视频 3–15秒", "保留原声", "视频编辑"];
     const summary = videoModelSummary(id, protocol, metadata);
     const referenceLabel = videoReferenceSupport(id, protocol, metadata).label;
@@ -52,6 +60,7 @@ export function videoModelPickerTags(id: string, protocol: string, metadata?: Pr
 }
 
 export function videoModelReferenceError(id: string, protocol: string, references: PickerReferences, metadata?: ProviderModelMetadata) {
+    if (metadata?.generation_contract) return mediaContractError(metadata) || mediaContractReferences(metadata.generation_contract, references);
     const support = videoReferenceSupport(id, protocol, metadata);
     if (references.hasImageReferences && support.image === false) return "此模型不支持参考图片，请选择图生视频或全能参考模型";
     if (references.hasVideoReferences && support.video === false) return "此模型不支持参考视频，请选择支持视频参考的模型";

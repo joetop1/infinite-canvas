@@ -1,4 +1,5 @@
 import { supportsVideoEditing, videoEditingInputError, videoEditingPrompt } from "@/lib/video-editing";
+import { mediaContractReferenceError } from "@/lib/media-contract";
 import { channelModelIdError } from "@/lib/model-channel";
 import { readMediaMetadata } from "@/lib/media-metadata";
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
@@ -143,6 +144,8 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     }
     const referenceError = videoModelReferenceError(model, videoChannelProtocol(config, model), { hasImageReferences: Boolean(input.references.length || input.firstFrame || input.lastFrame), hasVideoReferences: input.videoReferences.length > 0, hasAudioReferences: input.audioReferences.length > 0 }, modelMetadataForConfig(config, model));
     if (referenceError) throw new VideoRequestError(referenceError);
+    const contractError = mediaContractReferenceError(modelMetadataForConfig(config, model), input);
+    if (contractError) throw new VideoRequestError(contractError);
     if (videoChannelProtocol(config, model) === "fal" && model.split(/[?#]/)[0] === "minimax/h3-max/reference-to-video") {
         const count = input.references.length + input.videoReferences.length + input.audioReferences.length;
         if (!count) throw new VideoRequestError("MiniMax H3 Max 全能参考需要至少一份参考素材，首尾帧不能代替参考素材");

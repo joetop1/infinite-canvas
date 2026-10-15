@@ -23,6 +23,7 @@ type directAIRequestInput struct {
 }
 
 type directAIChannelInput struct {
+	StrictContracts bool `json:"strictContracts,omitempty"`
 	Protocol string `json:"protocol"`
 	BaseURL  string `json:"baseUrl"`
 }
@@ -84,6 +85,7 @@ func prepareDirectAIRequest(input directAIRequestInput) (directAIRequestPlan, er
 	}
 
 	channel := model.ModelChannel{
+		StrictContracts: input.Channel.StrictContracts,
 		Protocol: input.Channel.Protocol,
 		BaseURL:  input.Channel.BaseURL,
 	}

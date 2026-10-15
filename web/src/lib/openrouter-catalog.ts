@@ -1,4 +1,7 @@
+export type MediaContractField = { name: string; type: string; required?: boolean; default?: unknown; values?: Array<string | number | boolean>; min?: number; max?: number; maxItems?: number };
+export type MediaContract = { version: number; status: "ready" | "unadapted" | "syncing"; reason?: string; source?: string; revision?: string; providerVersion?: string; fetchedAt?: string; capability?: string; bindings?: Record<string, MediaContractField>; nativeAudio?: boolean; requiresReference?: boolean; maxReferences?: number; referenceMinSeconds?: number; referenceMaxSeconds?: number; referenceTotalSeconds?: number };
 export type ProviderModelMetadata = {
+    generation_contract?: MediaContract;
     name?: string;
     architecture?: { input_modalities?: string[]; output_modalities?: string[] };
     supported_resolutions?: string[];

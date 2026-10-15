@@ -142,6 +142,15 @@ export function videoModelProfile(modelName: string, protocol = "", metadata?: P
     }
     const model = modelName.trim().toLowerCase().split(/[?#]/)[0].replace(/[._/]+/g, "-");
     if (!model) return null;
+    const contract = metadata?.generation_contract;
+    if (contract) {
+        if (contract.status !== "ready") return null;
+        const fields = contract.bindings || {};
+        const resolutions = fields.resolution?.values?.map((value) => String(value).toLowerCase().replace(/p$/, "")) || [];
+        const durations = fields.duration?.values?.map(Number).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+        if (!resolutions.length || !fields.duration) return null;
+        return { resolutions, defaultResolution: String(fields.resolution?.default ?? resolutions[0]).toLowerCase().replace(/p$/, ""), minSeconds: durations?.[0] ?? fields.duration.min ?? Number(fields.duration.default || 5), maxSeconds: durations?.at(-1) ?? fields.duration.max ?? Number(fields.duration.default || 5), durationOptions: durations?.length ? durations.map(String) : undefined, supportsAudio: Boolean(fields.audio || contract.nativeAudio), audioToggle: Boolean(fields.audio), audioKnown: true };
+    }
 
     if (protocol === "fal" && model === "minimax-h3-max-reference-to-video") {
         return { resolutions: ["480", "768", "1080"], defaultResolution: "768", minSeconds: 1, maxSeconds: 15, supportsAudio: true, audioToggle: false };

@@ -149,6 +149,7 @@ func New() *gin.Engine {
 	admin.GET("/settings", gin.WrapF(handler.AdminSettings))
 	admin.POST("/settings", gin.WrapF(handler.AdminSaveSettings))
 	admin.POST("/settings/channel-models", gin.WrapF(handler.AdminChannelModels))
+	admin.POST("/settings/channel-contracts", gin.WrapF(handler.AdminChannelContracts))
 	admin.POST("/settings/channel-test", gin.WrapF(handler.AdminTestChannelModel))
 	admin.POST("/workflow-providers/runninghub/inspect", gin.WrapF(handler.AdminRunningHubInspect))
 	admin.GET("/comfy-bridges", gin.WrapF(handler.AdminComfyBridges))

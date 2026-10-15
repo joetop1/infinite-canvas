@@ -1,6 +1,7 @@
 "use client";
 
 import type { ModelMetadata } from "@/lib/openrouter-catalog";
+import { syncChannelContracts } from "@/services/api/admin";
 
 import { CheckCircleOutlined, DeleteOutlined, FormatPainterOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
 import { json } from "@codemirror/lang-json";
@@ -935,6 +936,7 @@ export default function AdminSettingsPage() {
                                 <Form.Item name="enabled" label="启用" valuePropName="checked">
                                     <Switch />
                                 </Form.Item>
+                                {["fal", "replicate", "ark", "openai"].includes(channelProtocol) ? <Form.Item name="strictContracts" label="统一模型适配" valuePropName="checked" extra="先同步模型规范；适用于 Fal、Replicate 和原生 Seedance。启用后，待适配模型会在生成前拦截。"><Switch /></Form.Item> : null}
                             </Col>
                             <Col span={24}>
                                 <Form.Item
@@ -1019,6 +1021,10 @@ export default function AdminSettingsPage() {
                         onCancel={closeChannelModelSelector}
                         onConfirm={confirmChannelModelSelector}
                         onFetchModels={fetchChannelModelList}
+                        onSyncContracts={["fal", "replicate", "ark", "openai"].includes(channelProtocol) ? async (models) => {
+                            if (!token) return;
+                            return syncChannelContracts(token, { index: editingChannelIndex ?? undefined, channel: normalizeChannel({ ...channelForm.getFieldsValue(true), models }) });
+                        } : undefined}
                         onModelsFetched={rememberModels}
                     />
                 ) : null}
@@ -1210,6 +1216,7 @@ function normalizeChannel(item: Partial<AdminModelChannel> = {}): AdminModelChan
         models: item.models || [],
         modelCapabilities: item.modelCapabilities || {},
         modelMetadata: item.modelMetadata || {},
+        strictContracts: item.strictContracts === true,
         parameterTranslation: item.parameterTranslation || "",
         uploadApiKey: item.uploadApiKey || "",
         bridgeId: item.bridgeId || "",

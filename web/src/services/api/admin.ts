@@ -183,6 +183,7 @@ export async function deleteAdminAsset(token: string, id: string) {
 }
 
 export type AdminModelChannel = {
+    strictContracts?: boolean;
     id: string;
     protocol: ModelChannelProtocol;
     name: string;
@@ -369,6 +370,16 @@ export type AdminChannelActionRequest = {
 
 export async function fetchChannelModels(token: string, payload: AdminChannelActionRequest) {
     return apiPost<string[] | ChannelModelCatalog>("/api/admin/settings/channel-models", payload, token);
+}
+
+export async function syncChannelContracts(token: string, payload: AdminChannelActionRequest) {
+    const result: ChannelModelCatalog = { models: payload.channel.models, modelCapabilities: {}, modelMetadata: {} };
+    for (let start = 0; start < payload.channel.models.length; start += 20) {
+        const batch = await apiPost<ChannelModelCatalog>("/api/admin/settings/channel-contracts", { ...payload, channel: { ...payload.channel, models: payload.channel.models.slice(start, start + 20) } }, token);
+        Object.assign(result.modelCapabilities, batch.modelCapabilities);
+        Object.assign(result.modelMetadata, batch.modelMetadata);
+    }
+    return result;
 }
 
 export async function testChannelModel(token: string, payload: AdminChannelActionRequest) {

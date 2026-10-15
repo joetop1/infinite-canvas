@@ -111,7 +111,13 @@ func prepareFalRequest(input aiProtocolRequest) (aiProtocolRequest, bool, error)
 		return input, false, nil
 	}
 	input.failureLabel = "Fal"
-	body, err := normalizeFalDirectBody(input.body, input.contentType, input.modelName, input.endpoint)
+	var body []byte
+	var err error
+	if input.channel.StrictContracts {
+		body, err = normalizeContractDirectBody(input)
+	} else {
+		body, err = normalizeFalDirectBody(input.body, input.contentType, input.modelName, input.endpoint)
+	}
 	if err != nil {
 		return input, true, err
 	}

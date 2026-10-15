@@ -3,6 +3,7 @@
 import { supportsVideoEditing } from "@/lib/video-editing";
 import { useChannelTranslationStore } from "@/stores/use-channel-translation-store";
 import { channelModelIdError } from "@/lib/model-channel";
+import { mediaContractError } from "@/lib/media-contract";
 
 import type { ModelMetadata } from "@/lib/openrouter-catalog";
 
@@ -55,7 +56,7 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
                 ? config.publicChannels.map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "云端渠道", baseUrl: channel.baseUrl, models: channel.models, modelCapabilities: channel.modelCapabilities, modelMetadata: channel.modelMetadata, translatedModels: channel.parameterTranslationModels || [], workflows: channel.workflows || [] }))
                 : normalizeLocalChannels(config).map((channel) => ({ id: channel.id, protocol: channel.protocol, name: channel.name || "本地渠道", baseUrl: channel.baseUrl, models: channel.models, modelCapabilities: channel.modelCapabilities, modelMetadata: channel.modelMetadata, translatedModels: localTranslations?.[channel.id]?.trim() ? channel.models : [], workflows: channel.workflowSummaries || [] }));
         const classifiedModels = channels.filter((channel) => !isWorkflowProtocol(channel.protocol || "")).flatMap((channel) => filterModelsByCapability(channel.models ?? [], capability, channel.protocol || "", channel.modelCapabilities).filter((model) => channel.translatedModels.includes(model) || !channelModelIdError(channel.protocol || "", model)).map((model) => ({ key: `${channel.id}::${model}`, channelId: channel.id, channelName: channel.name, protocol: channel.protocol, baseUrl: channel.baseUrl, modelMetadata: channel.modelMetadata, model })));
-        const filtered = classifiedModels.filter((item) => !videoEditing || supportsVideoEditing(item.model, item.protocol || "")).filter((item) => capability !== "video" || !videoModelReferenceError(item.model, item.protocol || "", { hasImageReferences, hasVideoReferences, hasAudioReferences }, item.modelMetadata?.[item.model]));
+        const filtered = classifiedModels.filter((item) => !videoEditing || supportsVideoEditing(item.model, item.protocol || "")).filter((item) => capability !== "video" || Boolean(mediaContractError(item.modelMetadata?.[item.model])) || !videoModelReferenceError(item.model, item.protocol || "", { hasImageReferences, hasVideoReferences, hasAudioReferences }, item.modelMetadata?.[item.model]));
         if (videoEditing || !workflowEnabled || !token) return filtered;
         const scope = config.channelMode === "remote" ? "system" : "personal";
         return [...filtered, ...channels.flatMap((channel) => isWorkflowProtocol(channel.protocol || "") ? channel.workflows.filter((entry) => entry.enabled && entry.capability === capability && entry.provider === channel.protocol).map((entry) => {
@@ -140,7 +141,7 @@ export function ModelPicker({ config, value, channelId, capability, hasImageRefe
             >
                 {options.length ? (
                     options.map((option) => (
-                        <SelectItem className="py-2 pr-8 pl-2.5 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 data-[state=checked]:bg-accent" key={option.key} value={option.key} textValue={`${"workflowRef" in option ? option.label : modelLabel(option.model, option)} ${option.model} ${option.channelName}`}>
+                        <SelectItem disabled={!("workflowRef" in option) && Boolean(mediaContractError(option.modelMetadata?.[option.model]))} className="py-2 pr-8 pl-2.5 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 data-[state=checked]:bg-accent" key={option.key} value={option.key} textValue={`${"workflowRef" in option ? option.label : modelLabel(option.model, option)} ${option.model} ${option.channelName}`}>
                             <ModelLabel model={"workflowRef" in option ? option.workflowRef.workflowId : option.model} label={"workflowRef" in option ? `工作流 · ${option.label}` : modelLabel(option.model, option)} channelName={option.channelName} details={capability === "video" && !("workflowRef" in option) ? videoModelPickerTags(option.model, option.protocol || "", option.modelMetadata?.[option.model]) : null} />
                         </SelectItem>
                     ))

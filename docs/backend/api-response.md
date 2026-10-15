@@ -59,3 +59,10 @@ description: 业务接口统一响应结构与前端处理约定
 
 - `POST /api/v1/media/trim-video` 需要用户登录，multipart 字段为 `file`、`start`、`end`（秒）。选择片段为 3–14.9 秒，原片不超过 200MB / 3840px。成功返回 `video/mp4` 二进制，前端沿用素材上传入口另存；失败仍返回现有 `Fail` 业务结构。
 - 裁剪不调用 AI 渠道、不创建生成任务或扣算力点；FFmpeg 最多并发两个任务，90 秒超时，并再次读取输出编码的真实长度。原视频保留，不自动提交编辑生成。
+
+
+## 统一模型规范
+
+- 管理员 `POST /api/admin/settings/channel-contracts` 接收 `{ index, channel }`，每次最多 30 个所选模型，沿用 `{ code, data, msg }`；客户端每批 20 个。服务端使用保存的渠道凭据读取官方规范，不返回密钥。响应沿用渠道模型目录结构，元数据 `generation_contract` 包含状态、来源、修订摘要和语义字段约束，不公开编译器或完整私有请求。
+- 渠道 `strictContracts` 默认 false。开启后，后端不信任客户端能力声明，按服务端规范映射并完整校验生成请求；前端禁用待适配模型。Fal/Replicate 至少有一个已就绪模型才能开启；自定义参数转译不可同时启用。原生 Seedance 使用核对后的本地规范。
+- 参考素材匿名下载预检仅检查 GET/Range 可读性，不扩大素材分享或新增转存。失败返回中文原因，不提交模型；视频沿用已有幂等任务和预扣返还逻辑。Replicate 固定到规范对应版本，避免同步后 latest_version 变化。

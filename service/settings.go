@@ -55,6 +55,12 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 	keepPrivateAuthSecrets(&settings, normalizeSettings(saved))
 	keepPrivateStorageSecrets(&settings, normalizeSettings(saved))
 	for _, channel := range settings.Private.Channels {
+		if channel.StrictContracts && usesMediaContract(channel) {
+			if strings.TrimSpace(channel.ParameterTranslation) != "" { return model.Settings{}, fmt.Errorf("渠道 %s：自定义参数转译请使用独立渠道，暂不能与统一模型适配混用", channel.Name) }
+			ready := false
+			for _, name := range channel.Models { if entry := cachedMediaContract(channel, name); entry != nil && entry.Description.Status == "ready" { ready = true } }
+			if !ready { return model.Settings{}, fmt.Errorf("渠道 %s：请先同步模型规范，至少有一个模型完成适配后再启用", channel.Name) }
+		}
 		if _, err := ParameterTranslationModels(channel.ParameterTranslation); err != nil {
 			return model.Settings{}, fmt.Errorf("渠道 %s：%w", channel.Name, err)
 		}
@@ -1189,7 +1195,7 @@ func publicChannelInfos(channels []model.ModelChannel, availableModels, availabl
 		modelCapabilities := map[string]string{}
 		modelMetadata := map[string]json.RawMessage{}
 		for _, name := range models {
-			if metadata, ok := channel.ModelMetadata[name]; ok { modelMetadata[name] = metadata }
+			if metadata := PublishedMediaMetadata(channel, name); metadata != nil { modelMetadata[name] = metadata }
 			if capability, ok := channel.ModelCapabilities[name]; ok {
 				modelCapabilities[name] = capability
 			}
@@ -1197,6 +1203,7 @@ func publicChannelInfos(channels []model.ModelChannel, availableModels, availabl
 		translated, _ := ParameterTranslationModels(channel.ParameterTranslation)
 		translated = filterEnabledModels(translated, models)
 		result = append(result, model.PublicModelChannelInfo{
+			StrictContracts: channel.StrictContracts,
 			ParameterTranslationModels: translated,
 			ID:                         channel.ID,
 			Protocol:                   channel.Protocol,
