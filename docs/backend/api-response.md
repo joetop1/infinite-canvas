@@ -36,3 +36,8 @@ description: 业务接口统一响应结构与前端处理约定
 - `_parameterTranslation` 是系统内部负载。后端按账号或公共渠道读取保存的原文，转译后只向供应商发送配置里的方法、地址、请求头、查询参数和请求体。
 - 图片 JSON 结果归一为 `{ data: [{ url }] }`；音频 URL 归一为 `{ provider: "parameter-translation", audio_url }`。配置直接返回文件时沿用二进制响应及 MIME。失败仍用现有 `Fail` 业务结构。
 - 视频沿用现有任务响应，增加 `parameter_translation: true` 标记；私有查询快照和公共渠道脚本不随响应返回。创建、查询、完成和失败均进入现有任务管理，失败不重发默认请求。
+
+## 视频裁剪另存
+
+- `POST /api/v1/media/trim-video` 需要用户登录，multipart 字段为 `file`、`start`、`end`（秒）。选择片段为 3–14.9 秒，原片不超过 200MB / 3840px。成功返回 `video/mp4` 二进制，前端沿用素材上传入口另存；失败仍返回现有 `Fail` 业务结构。
+- 裁剪不调用 AI 渠道、不创建生成任务或扣算力点；FFmpeg 最多并发两个任务，90 秒超时，并再次读取输出编码的真实长度。原视频保留，不自动提交编辑生成。

@@ -25,7 +25,9 @@ export function videoEditingInputError(input: Required<VideoReferenceInput>) {
     if (input.references.length > 4) return "Kling O3 编辑最多支持 4 张参考图";
     if (input.audioReferences.length || input.firstFrame || input.lastFrame) return "视频编辑使用原视频和参考图片，请移除音频及首尾帧设置";
     const video = input.videoReferences[0];
-    if (!video.durationMs || video.durationMs < 3000 || video.durationMs > 15000) return "Kling O3 编辑的原视频实际长度需要在 3–15 秒之间，请先裁剪超长视频";
+    if (!video.durationMs) return "无法读取原视频实际长度，请重新载入原视频";
+    if (video.durationMs < 3000) return `原视频实际为 ${(video.durationMs / 1000).toFixed(3)} 秒，短于 3 秒，请换用更长的原视频`;
+    if (video.durationMs > 15000) return `原视频实际为 ${((video.durationMs || 0) / 1000).toFixed(3)} 秒，Kling O3 编辑需 3–15 秒。请点击「裁剪原视频」另存有效片段后重试`;
     if (video.width && video.height && (Math.min(video.width, video.height) < 720 || Math.max(video.width, video.height) > 3840)) return "Kling O3 编辑的原视频尺寸需在 720–3840 像素范围内";
     return "";
 }

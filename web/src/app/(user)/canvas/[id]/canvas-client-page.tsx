@@ -55,6 +55,7 @@ import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "../co
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "../components/canvas-node-split-dialog";
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { buildNodeChatMessages, buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGenerationContext, type NodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
+import { CanvasVideoTrimDialog } from "../components/canvas-video-trim-dialog";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
@@ -400,6 +401,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const [openDirectorNodeId, setOpenDirectorNodeId] = useState<string | null>(null);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
+    const [videoTrimSource, setVideoTrimSource] = useState<CanvasNodeData | null>(null);
+    const [videoTrimTargetId, setVideoTrimTargetId] = useState<string | null>(null);
     const [audioTrimNodeId, setAudioTrimNodeId] = useState<string | null>(null);
     const [audioTrimStart, setAudioTrimStart] = useState(0);
     const [audioTrimEnd, setAudioTrimEnd] = useState(0);
@@ -4515,6 +4518,21 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     />
                 ) : null}
 
+                {videoTrimSource ? <CanvasVideoTrimDialog source={videoTrimSource} onClose={() => setVideoTrimSource(null)} onComplete={(file, start, end) => {
+                    const source = videoTrimSource;
+                    const clip = createCanvasNode(CanvasNodeType.Video, { x: source.position.x + source.width + 80, y: source.position.y + source.height + 80 }, {
+                        content: file.url, storageKey: file.storageKey, mimeType: file.mimeType, bytes: file.bytes, status: NODE_STATUS_SUCCESS,
+                        mediaDurationMs: file.durationMs, durationMs: file.durationMs, naturalWidth: file.width, naturalHeight: file.height,
+                    });
+                    clip.title = `${source.title || "视频"} · 裁剪 ${start.toFixed(1)}–${end.toFixed(1)}秒`;
+                    clip.width = source.width; clip.height = source.height;
+                    const target = videoTrimTargetId;
+                    setNodes((prev) => [...prev.map((node) => node.id === target ? { ...node, metadata: { ...node.metadata, status: "idle", errorDetails: undefined, clientTaskId: undefined, videoTaskId: undefined, taskBackend: undefined, startedAt: undefined, progress: 0, seconds: String(Math.ceil((file.durationMs || (end-start)*1000) / 1000)), references: node.metadata?.references?.map((ref) => ref === source.metadata?.storageKey || ref === source.metadata?.content ? file.storageKey : ref) } } : node), clip]);
+                    setConnections((prev) => [...prev.map((edge) => target && edge.toNodeId === target && edge.fromNodeId === source.id ? { ...edge, fromNodeId: clip.id } : edge), { id: nanoid(), fromNodeId: source.id, toNodeId: clip.id }]);
+                    setVideoTrimSource(null);
+                    setSelectedNodeIds(new Set([target || clip.id]));
+                    message.success(target ? "已裁剪另存并替换此任务的原视频参考，点击重试即可" : "已裁剪另存，原视频保留");
+                }} /> : null}
                 <CanvasNodeHoverToolbar
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
@@ -4528,6 +4546,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onExtractAudio={(node) => void extractAudio(node)}
+                    onTrimVideo={(node) => {
+                        const source = node.metadata?.content ? node : connectionsRef.current.filter((edge) => edge.toNodeId === node.id).map((edge) => nodesRef.current.find((item) => item.id === edge.fromNodeId)).find((item) => item?.type === CanvasNodeType.Video && item.metadata?.content);
+                        if (!source) { message.error("未找到原视频，请先连接一段视频"); return; }
+                        setVideoTrimTargetId(node.metadata?.videoEditing && !node.metadata?.content ? node.id : null);
+                        setVideoTrimSource(source);
+                    }}
                     onTrimAudio={(node) => setAudioTrimNodeId(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}

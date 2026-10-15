@@ -42,6 +42,7 @@ func New() *gin.Engine {
 	v1.POST("/images/edits", gin.WrapF(handler.AIImagesEdits))
 	v1.POST("/responses", gin.WrapF(handler.AIResponses))
 	v1.POST("/chat/completions", gin.WrapF(handler.AIChatCompletions))
+	v1.POST("/media/trim-video", gin.WrapF(handler.TrimVideo))
 	v1.POST("/audio/speech", gin.WrapF(handler.AIAudioSpeech))
 	v1.GET("/tts/voices", gin.WrapF(handler.AITTSVoices))
 	v1.POST("/canvas/tasks/stop", gin.WrapF(handler.StopCanvasTask))

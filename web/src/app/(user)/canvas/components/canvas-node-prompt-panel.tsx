@@ -86,6 +86,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     }, [node.id, sourcePrompt]);
 
     useEffect(() => {
+        if (node.metadata?.videoEditing && (node.metadata.status === "idle" || node.metadata.status === "error")) setPrompt(sourcePrompt);
+    }, [node.metadata?.videoEditing, node.metadata?.status, sourcePrompt]);
+
+    useEffect(() => {
         if (node.metadata?.status === "stopped") setPrompt("");
     }, [node.id, node.metadata?.status]);
 

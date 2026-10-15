@@ -26,6 +26,7 @@ type CanvasNodeHoverToolbarProps = {
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onExtractAudio: (node: CanvasNodeData) => void;
+    onTrimVideo: (node: CanvasNodeData) => void;
     onTrimAudio: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
@@ -67,6 +68,7 @@ export function CanvasNodeHoverToolbar({
     onGenerateImage,
     onUpload,
     onExtractAudio,
+    onTrimVideo,
     onTrimAudio,
     onDownload,
     onSaveAsset,
@@ -172,6 +174,7 @@ export function CanvasNodeHoverToolbar({
             icon: <Music2 className="size-4" />,
             onClick: () => onExtractAudio(node),
         }] : []),
+        ...(isVideo && (hasVideo || node.metadata?.videoEditing) ? [{ id: "trimVideo", title: hasVideo ? "裁剪另存" : "裁剪原视频", label: hasVideo ? "裁剪另存" : "裁剪原视频", icon: <Scissors className="size-4" />, onClick: () => onTrimVideo(node) }] : []),
         ...(hasAudio ? [{
             id: "trimAudio",
             title: "截取音频",
