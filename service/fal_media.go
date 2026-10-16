@@ -16,9 +16,12 @@ import (
 	"github.com/tigerowo/infinite-canvas/model"
 )
 
-// StageFalEditMedia transfers this site's stored inputs to Fal before inference.
+// StageFalEditMedia transfers authorized edit and H3 inputs to Fal before inference.
 func StageFalEditMedia(ctx context.Context, channel model.ModelChannel, modelName string, siteHosts []string, body []byte) ([]byte, error) {
-	if !IsFalChannel(channel) || (modelName != "fal-ai/kling-video/o3/pro/video-to-video/edit" && modelName != "fal-ai/kling-video/o3/standard/video-to-video/edit") {
+	name := strings.SplitN(modelName, "?", 2)[0]
+	edit := name == "fal-ai/kling-video/o3/pro/video-to-video/edit" || name == "fal-ai/kling-video/o3/standard/video-to-video/edit"
+	h3 := name == "minimax/h3-max/reference-to-video"
+	if !IsFalChannel(channel) || (!edit && !h3) {
 		return body, nil
 	}
 	var input map[string]json.RawMessage
@@ -50,31 +53,57 @@ func StageFalEditMedia(ctx context.Context, channel model.ModelChannel, modelNam
 		}
 		upstream, err := url.Parse(channel.BaseURL)
 		if err != nil || upstream.Scheme != "https" || (upstream.Hostname() != "queue.fal.run" && upstream.Hostname() != "fal.run") {
-			return "", fmt.Errorf("本站编辑素材转存需要 Fal 官方 HTTPS 渠道，请为自定义网关配置可公开访问的存储直链")
+			return "", fmt.Errorf("本站素材转存需要 Fal 官方 HTTPS 渠道，请为自定义网关配置可公开访问的存储直链")
 		}
 		return uploadStoredFalMedia(ctx, channel, parts[2])
 	}
-	var video string
-	if err := json.Unmarshal(input["video_url"], &video); err != nil {
-		return nil, err
+	fields := []struct {
+		name  string
+		array bool
+	}{{"video_url", false}, {"image_urls", true}}
+	if h3 {
+		fields = []struct {
+			name  string
+			array bool
+		}{{"reference_image_urls", true}, {"reference_video_urls", true}, {"image_url", false}, {"end_image_url", false}}
 	}
-	video, err := stage(video)
-	if err != nil {
-		return nil, fmt.Errorf("原视频转存失败：%w", err)
-	}
-	input["video_url"], _ = json.Marshal(video)
-	if raw, ok := input["image_urls"]; ok {
-		var images []string
-		if err := json.Unmarshal(raw, &images); err != nil {
-			return nil, err
+	staged := map[string]string{}
+	for _, field := range fields {
+		raw, exists := input[field.name]
+		if !exists {
+			continue
 		}
-		for i := range images {
-			images[i], err = stage(images[i])
-			if err != nil {
-				return nil, fmt.Errorf("参考图片 %d 转存失败：%w", i+1, err)
+		var values []string
+		if field.array {
+			if err := json.Unmarshal(raw, &values); err != nil {
+				return nil, fmt.Errorf("%s 素材格式无效", field.name)
 			}
+		} else {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, fmt.Errorf("%s 素材格式无效", field.name)
+			}
+			values = []string{value}
 		}
-		input["image_urls"], _ = json.Marshal(images)
+		for i, value := range values {
+			if value == "" {
+				continue
+			}
+			if cached, ok := staged[value]; ok {
+				values[i] = cached
+				continue
+			}
+			result, err := stage(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s 第 %d 份素材转存失败：%w", field.name, i+1, err)
+			}
+			staged[value], values[i] = result, result
+		}
+		if field.array {
+			input[field.name], _ = json.Marshal(values)
+		} else {
+			input[field.name], _ = json.Marshal(values[0])
+		}
 	}
 	return json.Marshal(input)
 }
@@ -87,7 +116,7 @@ func uploadStoredFalMedia(ctx context.Context, channel model.ModelChannel, id st
 	defer download.Stream.Close()
 	const limit = 200 << 20
 	if download.ContentLength > limit || (!strings.HasPrefix(download.Object.MimeType, "image/") && !strings.HasPrefix(download.Object.MimeType, "video/")) {
-		return "", fmt.Errorf("编辑素材须为不超过 200MB 的图片或视频")
+		return "", fmt.Errorf("转存素材须为不超过 200MB 的图片或视频")
 	}
 	file, err := os.CreateTemp("", "fal-edit-*")
 	if err != nil {
@@ -100,7 +129,7 @@ func uploadStoredFalMedia(ctx context.Context, channel model.ModelChannel, id st
 		return "", err
 	}
 	if size == 0 || size > limit {
-		return "", fmt.Errorf("编辑素材为空或超过 200MB")
+		return "", fmt.Errorf("转存素材为空或超过 200MB")
 	}
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return "", err
