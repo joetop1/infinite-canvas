@@ -118,6 +118,7 @@ export type CanvasNodeMetadata = {
 };
 
 export type CanvasDirectorPanorama = {
+    storageKey?: string;
     edgeId: string;
     sourceNodeId: string;
     imageUrl: string;

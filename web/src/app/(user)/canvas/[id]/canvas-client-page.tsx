@@ -1147,6 +1147,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 edgeId: connection.id,
                 sourceNodeId: source.id,
                 imageUrl: source.metadata.content,
+                storageKey: source.metadata.storageKey,
                 fileName: source.title || "画布图片.png",
                 projectionMode: source.metadata.panoramaProjection === "equirectangular" ? "equirectangular" : "backdrop",
             });

@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { imageToDataUrl, type UploadedImage } from "@/services/image-storage";
+import { persistDirectorImages, restoreDirectorImages } from "../utils/canvas-director-media";
+
 import type { CanvasDirectorCapture, CanvasDirectorPanorama, CanvasDirectorVideo } from "../types";
 
 type PanoramaRemoval = Pick<CanvasDirectorPanorama, "edgeId" | "sourceNodeId">;
@@ -32,7 +35,11 @@ export function CanvasDirector({
     const projectRef = useRef(project);
     const themeRef = useRef(theme);
     const sessionSentRef = useRef(false);
-    const [ready, setReady] = useState(false);
+    const [ready, setReady] = useState(0);
+    const [mediaError, setMediaError] = useState("");
+    const pendingImages = useRef(new Map<string, Promise<UploadedImage>>());
+    const saveRevision = useRef(0);
+    const panoramaKey = JSON.stringify(panoramas);
 
     useEffect(() => {
         projectRef.current = project;
@@ -52,7 +59,8 @@ export function CanvasDirector({
 
             const type = event.data?.type;
             if (type === "storyai:director-ready") {
-                setReady(true);
+                sessionSentRef.current = false;
+                setReady((value) => value + 1);
                 return;
             }
 
@@ -63,7 +71,17 @@ export function CanvasDirector({
 
             if (type === "storyai:director-project-changed") {
                 const nextProject = event.data?.payload?.project;
-                if (nextProject && typeof nextProject === "object" && !Array.isArray(nextProject)) onProjectChange(nextProject);
+                if (nextProject && typeof nextProject === "object" && !Array.isArray(nextProject)) {
+                    const revision = ++saveRevision.current;
+                    void persistDirectorImages(nextProject, pendingImages.current).then((saved) => {
+                        if (revision !== saveRevision.current) return;
+                        projectRef.current = saved;
+                        onProjectChange(saved);
+                        setMediaError("");
+                    }).catch((error) => {
+                        if (revision === saveRevision.current) setMediaError(`全景图保存失败：${error instanceof Error ? error.message : "请重新导入原图"}`);
+                    });
+                }
                 return;
             }
 
@@ -109,23 +127,40 @@ export function CanvasDirector({
     }, [nodeId, onCapturesSent, onClose, onPanoramaRemoved, onProjectChange, onVideoSent]);
 
     useEffect(() => {
-        if (!ready || sessionSentRef.current) return;
-        sessionSentRef.current = true;
-        postToDesk("storyai:director-session", {
-            instanceId: nodeId,
-            theme: themeRef.current,
-            project: projectRef.current,
+        if (!ready) return;
+        let cancelled = false;
+        void (async () => {
+            // Session must precede panoramas: opening a session clears the iframe's host media map.
+            const [restored, resolved] = await Promise.all([
+                sessionSentRef.current ? undefined : restoreDirectorImages(projectRef.current),
+                Promise.all((JSON.parse(panoramaKey) as CanvasDirectorPanorama[]).map(async (panorama) => ({
+                    ...panorama,
+                    imageUrl: await imageToDataUrl({ storageKey: panorama.storageKey, url: panorama.imageUrl }),
+                }))),
+            ]);
+            if (cancelled) return;
+            if (!sessionSentRef.current) {
+                postToDesk("storyai:director-session", { instanceId: nodeId, theme: themeRef.current, project: restored });
+                sessionSentRef.current = true;
+            }
+            postToDesk("storyai:director-panoramas", { panoramas: resolved });
+            setMediaError("");
+        })().catch((error) => {
+            if (cancelled) return;
+            // Keep the project editable when an old temporary URL can no longer be recovered.
+            if (!sessionSentRef.current) {
+                postToDesk("storyai:director-session", { instanceId: nodeId, theme: themeRef.current, project: projectRef.current });
+                sessionSentRef.current = true;
+            }
+            setMediaError(`全景图读取失败：${error instanceof Error ? error.message : "请重新导入原图"}`);
         });
-    }, [nodeId, postToDesk, ready]);
-
-    useEffect(() => {
-        if (!ready || !sessionSentRef.current) return;
-        postToDesk("storyai:director-panoramas", { panoramas });
-    }, [panoramas, postToDesk, ready]);
+        return () => { cancelled = true; };
+    }, [nodeId, panoramaKey, postToDesk, ready]);
 
     return (
         <div className="fixed inset-0 z-[2000]">
             <iframe ref={iframeRef} title="3D导演台" src="/director/index.html" className="block h-full w-full border-0" />
+            {mediaError ? <div role="alert" className="absolute bottom-5 left-1/2 max-w-[80vw] -translate-x-1/2 rounded-lg border border-border bg-popover px-4 py-3 text-sm text-popover-foreground shadow-lg">{mediaError}</div> : null}
         </div>
     );
 }
