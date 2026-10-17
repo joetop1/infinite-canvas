@@ -1,5 +1,6 @@
 "use client";
 
+import { imageModelCapabilityError } from "@/lib/image-model-capabilities";
 import { supportsVideoEditing } from "@/lib/video-editing";
 
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
@@ -72,6 +73,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasAudioReferences = mode === "video" && !framesOnly && mentionReferences.some((reference) => reference.active && reference.kind === "audio");
     const editModelError = node.metadata?.videoEditing && !supportsVideoEditing(config.model, channelProtocolForConfig(config)) ? "请选择已适配的视频编辑模型" : "";
     const videoReferenceError = editModelError || (mode === "video" && !node.metadata?.workflowRef ? videoModelReferenceError(config.model, channelProtocolForConfig({ ...config, model: config.model, videoModel: config.model }), { hasImageReferences: hasVideoImageReferences, hasVideoReferences, hasAudioReferences }, modelMetadataForConfig(config, config.model)) : "");
+    const hasImageReferences = hasImageContent || mentionReferences.some((reference) => reference.active && reference.kind === "image") || connectedNodes.some((item) => isCanvasImageNodeType(item.type));
+    const imageReferenceError = mode === "image" && !node.metadata?.workflowRef ? imageModelCapabilityError(modelMetadataForConfig(config, config.model, "image"), { hasReferences: hasImageReferences, panorama: isPanorama }) : "";
+    const modelError = videoReferenceError || imageReferenceError;
     const sourcePrompt = isPanorama ? node.metadata?.panoramaSourcePrompt || "" : node.metadata?.prompt || "";
     const [prompt, setPrompt] = useState(sourcePrompt);
     const [expanded, setExpanded] = useState(false);
@@ -102,7 +106,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     const submit = () => {
         const text = prompt.trim();
-        if (!canSubmit || generating || isStopping) return;
+        if (!canSubmit || generating || isStopping || modelError) return;
         onGenerate(node.id, mode, text);
         if (!isPanorama) setPrompt("");
     };
@@ -135,7 +139,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
-                            <ModelPicker className="!w-[180px] !min-w-0 !shrink-0" config={config} value={config.model} channelId={config.imageChannelId} workflowRef={node.metadata?.workflowRef} onWorkflowChange={(workflowRef) => onConfigChange(node.id, { workflowRef })} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability="image" onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker className="!w-[180px] !min-w-0 !shrink-0" config={config} value={config.model} channelId={config.imageChannelId} workflowRef={node.metadata?.workflowRef} onWorkflowChange={(workflowRef) => onConfigChange(node.id, { workflowRef })} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability="image" hasImageReferences={hasImageReferences} panorama={isPanorama} onMissingConfig={() => openConfigDialog(true)} />
                             <CanvasImageSettingsPopover
                                 config={node.metadata?.workflowRef ? { ...config, model: "" } : config}
                                 placement="topLeft"
@@ -167,7 +171,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     type="primary"
                     danger={showStop}
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
-                    disabled={(isStopping && !stopFailed) || (!canStop && (generating || !canSubmit || videoReferenceError))}
+                    disabled={(isStopping && !stopFailed) || (!canStop && (generating || !canSubmit || modelError))}
                     onClick={canStop ? () => onStop(node.id) : submit}
                     aria-label={canStop ? stopFailed ? "重试停止" : "停止" : isStopping ? "停止中" : "生成"}
                 >
@@ -182,7 +186,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     </span>
                 </Button>
             </div>
-            {videoReferenceError ? <div className="mt-1 text-xs text-red-500">{videoReferenceError}</div> : null}
+            {modelError ? <div className="mt-1 text-xs text-red-500">{modelError}</div> : null}
             <Modal title="编辑提示词" open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
                     <CanvasNodeReferenceBar nodeId={node.id} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />

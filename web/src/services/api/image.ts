@@ -1,4 +1,6 @@
-import { openRouterImageBody } from "./protocols/openrouter-media";
+import { openRouterAspectRatio, openRouterImageBody } from "./protocols/openrouter-media";
+import { imageModelCapabilityError } from "@/lib/image-model-capabilities";
+import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
 import { fetchOpenRouterCatalog } from "@/lib/openrouter-catalog";
 import axios from "axios";
 import { executeParameterTranslation, findParameterTranslation, translationBody, translationHeaders, type TranslationInput } from "./channel-parameter-translation";
@@ -963,6 +965,7 @@ async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?
 		const result = await executeParameterTranslation(config,translation,input,signal);
 		return result.urls.map((dataUrl) => ({id:nanoid(),dataUrl}));
 	}
+    assertImageModelContract(config, references);
     if (channelProtocolForConfig(config) === "openrouter") {
         const params = { ...createImageRequestParams(config), signal };
         const body = await openRouterImageBody(config, prompt, references, params.n);
@@ -1044,8 +1047,14 @@ export async function requestEdit(config: AiConfig & { seedIndex?: number; seedC
     }
 }
 
+function assertImageModelContract(config: AiConfig, references: ReferenceImage[]) {
+    const error = imageModelCapabilityError(modelMetadataForConfig(config, config.model, "image"), { hasReferences: references.length > 0, referenceCount: references.length, ratio: openRouterAspectRatio(config.size) });
+    if (error) throw new Error(error);
+}
+
 export async function createCanvasImageTask(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], options: CanvasImageTaskOptions = {}): Promise<CanvasImageTask> {
 	const translation = await findParameterTranslation(config);
+    if (!translation) assertImageModelContract(config, references);
     if (!usesAccountProxy(config)) {
         const images = await requestImages({ ...config, count: "1" }, prompt, references, options.signal);
         options.signal?.throwIfAborted();

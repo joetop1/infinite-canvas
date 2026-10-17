@@ -1456,7 +1456,7 @@ function WorkbenchPanel({
                                 <ModelPicker
                                     config={config}
                                     value={model}
-                                    capability="image"
+                                    capability="image" hasImageReferences={references.length > 0}
                                     channelId={config.imageChannelId}
                                     workflowRef={config.imageWorkflowRef}
                                     onWorkflowChange={(value) => updateConfig("imageWorkflowRef", value)}
@@ -1537,7 +1537,7 @@ function WorkbenchPanel({
                 </section>
 
                 <div className="space-y-3">
-                    <GenerationSettings config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings hasImageReferences={references.length > 0} config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </div>
             <div className="shrink-0 border-t border-stone-200 p-4 dark:border-stone-800">
@@ -1915,7 +1915,7 @@ function CategoryCard({
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, model, updateConfig, openConfigDialog, hasImageReferences }: { hasImageReferences: boolean; config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -1925,7 +1925,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                     <span className="font-medium text-sm">模型</span>
                 </div>
                 <div className="border-t border-stone-200 p-3 dark:border-stone-800 space-y-2">
-                    <ModelPicker config={config} value={model} capability="image" channelId={config.imageChannelId} workflowRef={config.imageWorkflowRef} onWorkflowChange={(value) => updateConfig("imageWorkflowRef", value)} onChange={(value, channelId) => { updateConfig("imageModel", value); if (channelId) updateConfig("imageChannelId", channelId); }} fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                    <ModelPicker config={config} value={model} capability="image" hasImageReferences={hasImageReferences} channelId={config.imageChannelId} workflowRef={config.imageWorkflowRef} onWorkflowChange={(value) => updateConfig("imageWorkflowRef", value)} onChange={(value, channelId) => { updateConfig("imageModel", value); if (channelId) updateConfig("imageChannelId", channelId); }} fullWidth onMissingConfig={() => openConfigDialog(false)} />
                     <div className="flex items-center justify-between gap-3 pt-1">
                         <div className="text-xs opacity-75">接口模式</div>
                         <Segmented

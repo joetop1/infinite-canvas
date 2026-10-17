@@ -197,7 +197,7 @@ export function CanvasNodeMaskEditDialog({
 
                     <div className="space-y-2">
                         <div className="text-sm font-medium opacity-75">模型</div>
-                        <ModelPicker className="canvas-compact-control h-10" config={{ ...config, model, imageChannelId: channelId || config.imageChannelId }} value={model} channelId={channelId || config.imageChannelId} onChange={onModelChange} capability="image" onMissingConfig={onMissingConfig} fullWidth />
+                        <ModelPicker className="canvas-compact-control h-10" config={{ ...config, model, imageChannelId: channelId || config.imageChannelId }} value={model} channelId={channelId || config.imageChannelId} onChange={onModelChange} capability="image" hasImageReferences onMissingConfig={onMissingConfig} fullWidth />
                     </div>
 
                     <div className="mt-auto flex items-center justify-between gap-2">
