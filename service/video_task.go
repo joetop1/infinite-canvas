@@ -57,18 +57,18 @@ type VideoTaskCreateInput struct {
 }
 
 type VideoTaskPollUpdate struct {
-	Status       string
-	Progress     int
-	Seconds      string
-	Size         string
-	VideoURL     string
-	Error        string
-	ErrorDetail  string
-	ResponseBody string
-	Phase        string
-	Retryable    bool
+	Status                       string
+	Progress                     int
+	Seconds                      string
+	Size                         string
+	VideoURL                     string
+	Error                        string
+	ErrorDetail                  string
+	ResponseBody                 string
+	Phase                        string
+	Retryable                    bool
 	ParameterTranslationSnapshot string
-	StatusCode int
+	StatusCode                   int
 }
 
 type VideoTaskPollFunc func(context.Context, model.VideoTask) (VideoTaskPollUpdate, error)
@@ -110,10 +110,10 @@ func CreateVideoTask(input VideoTaskCreateInput) (model.VideoTask, error) {
 	if IsCompletedVideoTaskStatus(task.Status) || task.VideoURL != "" {
 		task.Status = "completed"
 		task.Progress = 100
-		task.CompletedAt = current
+		task.CompletedAt = videoTaskTime(time.Now())
 	} else if IsFailedVideoTaskStatus(task.Status) || task.Error != "" {
 		task.Status = "failed"
-		task.CompletedAt = current
+		task.CompletedAt = videoTaskTime(time.Now())
 	}
 	var saved model.VideoTask
 	var err error
@@ -237,17 +237,6 @@ func runVideoTaskPoller() {
 			if err := repository.MarkStaleVideoSubmissions(videoTaskTime(current.Add(-3*time.Minute)), videoTaskTime(current)); err != nil {
 				log.Printf("mark stale video submissions failed err=%v", err)
 			}
-			hasComfyTasks, comfyErr := expireComfyBridgeRequests("")
-			if comfyErr != nil {
-				log.Printf("expire Comfy Bridge requests failed err=%v", comfyErr)
-			}
-			hasComfyCleanup, cleanupErr := repository.CleanupComfyBridgeRequests(
-				current.Add(-videoTaskFinishedRetention),
-				current.Add(-comfyBridgeInspectTimeout),
-			)
-			if cleanupErr != nil {
-				log.Printf("cleanup Comfy Bridge requests failed err=%v", cleanupErr)
-			}
 			tasks, err := repository.ListDueVideoTasks(200)
 			if err != nil {
 				log.Printf("list due video tasks failed err=%v", err)
@@ -280,8 +269,8 @@ func runVideoTaskPoller() {
 			if audioErr != nil {
 				log.Printf("check active canvas audio tasks failed err=%v", audioErr)
 			}
-			if len(tasks) == 0 && len(workflowTasks) == 0 && !pendingVideoTasks && !hasComfyTasks && !hasComfyCleanup && !hasImageTasks && !hasAudioTasks {
-				if workflowErr != nil || pendingTaskErr != nil || comfyErr != nil || cleanupErr != nil || imageErr != nil || audioErr != nil {
+			if len(tasks) == 0 && len(workflowTasks) == 0 && !pendingVideoTasks && !hasImageTasks && !hasAudioTasks {
+				if workflowErr != nil || pendingTaskErr != nil || imageErr != nil || audioErr != nil {
 					waitForNextVideoTaskPoll()
 					continue
 				}
@@ -444,7 +433,7 @@ func UpdateVideoTaskFromPoll(task model.VideoTask, update VideoTaskPollUpdate) e
 		expected := task.Revision
 		task.Revision++
 		var refund *model.CreditLog
-		if task.ParameterTranslationSnapshot != "" && task.Phase == model.GenerationFailed && task.RefundedAt == "" && task.Credits > 0 {
+		if task.Phase == model.GenerationFailed && task.RefundedAt == "" && task.Credits > 0 {
 			extra, _ := json.Marshal(map[string]string{"model": task.Model, "path": "/videos"})
 			refund = &model.CreditLog{ID: newID("credit"), UserID: task.UserID, Type: model.CreditLogTypeAIRefund, Amount: task.Credits, Remark: "模型调用失败返还 " + task.Model, Extra: string(extra), CreatedAt: timestamp}
 			task.RefundedAt = timestamp
@@ -452,7 +441,7 @@ func UpdateVideoTaskFromPoll(task model.VideoTask, update VideoTaskPollUpdate) e
 		_, err := repository.CommitVideoTask(task, expected, refund)
 		return err
 	}
-	if task.ParameterTranslationSnapshot != "" && task.Status == "failed" {
+	if task.Status == "failed" {
 		extra, _ := json.Marshal(map[string]string{"model": task.Model, "path": "/videos"})
 		return repository.SaveFailedTranslatedVideoTask(task, model.CreditLog{ID: newID("credit"), UserID: task.UserID, Type: model.CreditLogTypeAIRefund, Amount: task.Credits, Remark: "模型调用失败返还 " + task.Model, Extra: string(extra), CreatedAt: timestamp})
 	}

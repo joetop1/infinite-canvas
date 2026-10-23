@@ -2,7 +2,7 @@
 
 import { fetchOpenRouterCatalog, type ModelMetadata } from "@/lib/openrouter-catalog";
 
-import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd";
+import { App, Button, Form, Input, Modal, Radio, Segmented, Select, Switch } from "antd";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 
@@ -582,6 +582,18 @@ export function AppConfigModal() {
                             </Form.Item>
                         ) : null}
                     </div>
+                    <Form.Item label="已有内容的节点再次生成时" className="mb-4">
+                        <Radio.Group value={config.nodeRegenerateBehavior} onChange={(event) => updateConfig("nodeRegenerateBehavior", event.target.value)} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", width: "100%", gap: 8 }}>
+                            <Radio value="overwrite">
+                                <span className="block text-sm font-medium">覆盖当前节点</span>
+                                <span className="mt-0.5 block text-xs opacity-60">直接替换该节点的内容和参数，想保留旧结果时，先复制或切换节点模式</span>
+                            </Radio>
+                            <Radio value="new-node">
+                                <span className="block text-sm font-medium">新建衍生节点</span>
+                                <span className="mt-0.5 block text-xs opacity-60">保留当前节点，新建一个节点承接生成结果，适合做变体或分支</span>
+                            </Radio>
+                        </Radio.Group>
+                    </Form.Item>
                     <div className="mb-4 grid gap-3 md:grid-cols-3">
                         <FeatureSwitch title="流式传输" description="开启后请求中追加 stream，支持读取中间图片事件并避免长时间无数据。" checked={Boolean(config.streamImages)} onChange={(checked) => updateConfig("streamImages", checked ? "1" : "")} />
                         <FeatureSwitch title="返回 Base64 图片数据" description="开启后 Image API 请求会追加 response_format: b64_json。" checked={Boolean(config.responseFormatB64Json)} onChange={(checked) => updateConfig("responseFormatB64Json", checked ? "1" : "")} />

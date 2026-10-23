@@ -265,6 +265,7 @@ export type AdminStorageProvider = {
     name: string;
     type: "s3" | "webdav";
     endpoint: string;
+    allowPrivateNetwork?: boolean;
     region: string;
     bucket: string;
     accessKeyId: string;

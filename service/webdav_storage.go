@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -24,7 +25,13 @@ func newWebDAVClient(provider model.StorageProvider) (*gowebdav.Client, error) {
 		return nil, errors.New("WebDAV 地址不能包含账号、密码或片段")
 	}
 	client := gowebdav.NewClient(strings.TrimRight(parsed.String(), "/"), provider.Username, provider.Password)
-	client.SetTransport(SafeProxyHTTPClient().Transport)
+	transport := SafeProxyHTTPClient().Transport
+	if provider.AllowPrivateNetwork {
+		directTransport := http.DefaultTransport.(*http.Transport).Clone()
+		directTransport.Proxy = nil
+		transport = directTransport
+	}
+	client.SetTransport(transport)
 	client.SetTimeout(5 * time.Minute)
 	return client, nil
 }

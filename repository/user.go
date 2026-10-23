@@ -169,7 +169,11 @@ func ListCreditLogs(q model.Query) ([]model.CreditLog, int64, error) {
 		return nil, 0, err
 	}
 	var logs []model.CreditLog
-	err = tx.Select("credit_logs.*, COALESCE(NULLIF(users.display_name, ''), users.username) AS user_display_name").Order("credit_logs.created_at desc").Offset(q.Offset()).Limit(q.PageSize).Find(&logs).Error
+	order := "credit_logs.created_at desc"
+	if db.Dialector.Name() == "sqlite" {
+		order += ", credit_logs.rowid desc"
+	}
+	err = tx.Select("credit_logs.*, COALESCE(NULLIF(users.display_name, ''), users.username) AS user_display_name").Order(order).Offset(q.Offset()).Limit(q.PageSize).Find(&logs).Error
 	return logs, total, err
 }
 

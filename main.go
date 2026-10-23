@@ -22,5 +22,6 @@ func main() {
 	service.StartPromptSyncScheduler()
 	service.StartCanvasProjectCleanupScheduler()
 	handler.StartVideoTaskPoller()
+	service.WakeComfyBridgePoller()
 	log.Fatal(router.New().Run(":" + config.Cfg.Port))
 }

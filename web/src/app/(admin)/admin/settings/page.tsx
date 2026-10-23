@@ -59,7 +59,7 @@ const emptySettings: AdminSettings = {
 };
 const emptyChannel: AdminModelChannel = { id: "", protocol: "openai", name: "", baseUrl: modelChannelDefaultBaseUrls.openai, apiKey: "", models: [], weight: 1, timeout: 600, enabled: true, remark: "" };
 const emptyS3StorageProvider: AdminStorageProvider = { id: "", name: "", type: "s3", endpoint: "", region: "auto", bucket: "", accessKeyId: "", secretAccessKey: "", publicBaseUrl: "", pathPrefix: "canvas", username: "", password: "", weight: 1, enabled: true, ownerUserId: "", capacityBytes: 0, capacityCheckedAt: "", capacityExceeded: false };
-const emptyWebDAVStorageProvider: AdminStorageProvider = { ...emptyS3StorageProvider, name: "", type: "webdav", region: "" };
+const emptyWebDAVStorageProvider: AdminStorageProvider = { ...emptyS3StorageProvider, name: "", type: "webdav", region: "", allowPrivateNetwork: false };
 
 type SettingsTabKey = "public" | "private";
 type EditorMode = "visual" | "json";
@@ -727,6 +727,13 @@ export default function AdminSettingsPage() {
                                                                         <Input placeholder={isWebDAV ? "https://dav.example.com/webdav" : "https://<account>.r2.cloudflarestorage.com"} />
                                                                     </Form.Item>
                                                                 </Col>
+                                                                {isWebDAV && (
+                                                                    <Col xs={24} md={3}>
+                                                                        <Form.Item name={[field.name, "allowPrivateNetwork"]} label="允许内网" valuePropName="checked">
+                                                                            <Switch />
+                                                                        </Form.Item>
+                                                                    </Col>
+                                                                )}
                                                                 {!isWebDAV && (
                                                                     <>
                                                                         <Col xs={24} md={4}>

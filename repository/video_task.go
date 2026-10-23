@@ -178,7 +178,7 @@ func ListDueVideoTasks(limit int) ([]model.VideoTask, error) {
 		limit = 100
 	}
 	var tasks []model.VideoTask
-	err = db.Where("status IN ?", []string{"queued", "in_progress", "processing", "running"}).
+	err = db.Where("status IN ?", []string{"queued", "in_progress", "processing", "running", "unknown"}).
 		Where("(phase = '' OR phase IS NULL OR phase NOT IN ?)", []string{model.GenerationSubmitting, model.GenerationUncertain, model.GenerationRecovery}).
 		Where("(next_poll_at = '' OR next_poll_at IS NULL OR next_poll_at <= ?)", time.Now().UTC().Format(time.RFC3339Nano)).
 		Where("(workflow_ref = '' OR workflow_ref IS NULL)").

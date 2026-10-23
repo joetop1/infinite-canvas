@@ -3,7 +3,7 @@ import { imageModelCapabilityError } from "@/lib/image-model-capabilities";
 import { modelMetadataForConfig } from "@/lib/openrouter-catalog";
 import { fetchOpenRouterCatalog } from "@/lib/openrouter-catalog";
 import axios from "axios";
-import { executeParameterTranslation, findParameterTranslation, translationBody, translationHeaders, type TranslationInput } from "./channel-parameter-translation";
+import { executeParameterTranslation, findParameterTranslation, normalizeTranslationAspectRatio, translationBody, translationHeaders, type TranslationInput } from "./channel-parameter-translation";
 
 import { isMiniMaxChannel, miniMaxModels } from "@/lib/minimax-video";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -1000,7 +1000,7 @@ async function imageTranslationInput(config: AiConfig, prompt: string, reference
             model: config.model,
             prompt: withPromptGuard(config, withSystemPrompt(config, prompt)),
             size: params.size,
-            aspectRatio: config.size,
+            aspectRatio: normalizeTranslationAspectRatio(config.size),
             quality: config.quality,
             count: params.n,
             images: await Promise.all(references.map(async (ref) => publicHttpUrl(ref.url) || publicHttpUrl(ref.dataUrl) || imageToDataUrl(ref))),
@@ -1222,17 +1222,17 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     };
 }
 
-export async function requestImageQuestion(config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void) {
-    if (isGeminiConfig(config)) return requestGeminiText(config, messages, onDelta);
+export async function requestImageQuestion(config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void, signal?: AbortSignal) {
+    if (isGeminiConfig(config)) return requestGeminiText(config, messages, onDelta, signal);
     let answer = "";
 
     try {
-        await withTimeout(IMAGE_REQUEST_TIMEOUT_SECONDS, undefined, async (signal) => {
+        await withTimeout(IMAGE_REQUEST_TIMEOUT_SECONDS, signal, async (requestSignal) => {
             const response = await fetch(aiApiUrl(config, "/chat/completions"), {
                 method: "POST",
-                headers: aiHeaders(config, "application/json"),
+                headers: { ...aiHeaders(config, "application/json"), ...(signal && usesAccountProxy(config) ? { "X-Canvas-Node-Request": "true" } : {}) },
                 body: JSON.stringify({ model: config.model, messages: withSystemMessage(config, messages), stream: true }),
-                signal,
+                signal: requestSignal,
             });
             if (!response.ok) {
                 const error = await fetchErrorDetail(response, "请求失败");
@@ -1397,14 +1397,15 @@ function parseGeminiImages(payload: Record<string, unknown>) {
     return images;
 }
 
-async function requestGeminiText(config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void) {
+async function requestGeminiText(config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void, signal?: AbortSignal) {
     const body = await createGeminiTextBody(config, withSystemMessage(config, messages));
     const proxy = usesAccountProxy(config);
     const channel = localChannelForActiveModel(config);
     const response = await fetch(proxy ? "/api/v1/chat/completions" : geminiActionUrl(channel?.baseUrl || config.baseUrl, config.model, "streamGenerateContent"), {
         method: "POST",
-        headers: proxy ? aiHeaders(config, "application/json") : geminiDirectHeaders(config),
+        headers: proxy ? { ...aiHeaders(config, "application/json"), ...(signal ? { "X-Canvas-Node-Request": "true" } : {}) } : geminiDirectHeaders(config),
         body: JSON.stringify(proxy ? body : withoutModel(body)),
+        signal,
     });
     if (!response.ok) {
         const error = await fetchErrorDetail(response, "请求失败");

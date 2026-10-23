@@ -283,20 +283,26 @@ func serveGeminiVideoTaskContent(w http.ResponseWriter, r *http.Request, id stri
 	} else {
 		channel, err = service.SelectModelChannelForModel(task.Model, task.ChannelID, false)
 	}
-	if err != nil || !service.IsGeminiChannel(channel) {
+	translatedContent := task.ParameterTranslationSnapshot != "" && task.VideoURL == "" && service.IsCompletedVideoTaskStatus(task.Status)
+	if err != nil || (!service.IsGeminiChannel(channel) && !translatedContent) {
 		return false
 	}
-	if strings.TrimSpace(task.VideoURL) == "" {
+	if !translatedContent && strings.TrimSpace(task.VideoURL) == "" {
 		Fail(w, "Gemini Veo 任务完成但没有返回视频地址")
 		return true
 	}
-	request, err := http.NewRequest(http.MethodGet, task.VideoURL, nil)
-	if err != nil {
-		Fail(w, "视频内容下载失败")
-		return true
+	var response *http.Response
+	if translatedContent {
+		response, err = service.ParameterTranslationVideoContent(r.Context(), task, channel)
+	} else {
+		request, requestErr := http.NewRequest(http.MethodGet, task.VideoURL, nil)
+		if requestErr != nil {
+			Fail(w, "视频内容下载失败")
+			return true
+		}
+		service.SetModelChannelAuthHeader(request, channel)
+		response, err = service.HTTPClientForChannel(channel).Do(request)
 	}
-	service.SetModelChannelAuthHeader(request, channel)
-	response, err := service.HTTPClientForChannel(channel).Do(request)
 	if err != nil {
 		Fail(w, "视频内容下载失败")
 		return true

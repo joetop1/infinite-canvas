@@ -181,6 +181,7 @@ export default function VideoPage() {
     const referenceImageLimit = klingOmni === "text-to-video" ? 0 : klingOmni === "image-to-video" ? 2 : klingOmni === "transformation" ? 4 : isKlingWorkbench && klingOmni !== "reference-to-video" ? 2 : referenceLimits.images;
     const videoReferenceLimit = klingAcceptsVideoReferences ? 1 : referenceLimits.videos;
     const hasPendingLogs = logs.some((log) => (log.status === "生成中" || (log.status === "停止中" && !log.error)) && log.task && !log.video);
+    const hasPendingTasks = hasPendingLogs || pendingCount > 0 || results.some((item) => item.status === "stopping" && !item.error);
     const usesBackendVideoTasks = (value: AiConfig) => value.channelMode === "remote" || (value.channelMode === "local" && Boolean(token));
 
     useEffect(() => {
@@ -221,7 +222,7 @@ export default function VideoPage() {
     }, [logs]);
 
     useEffect(() => {
-        if (!hasPendingLogs) return;
+        if (!hasPendingTasks) return;
         const controller = new AbortController();
         const context = { token: token || "", signal: controller.signal };
         const timer = window.setInterval(() => {
@@ -231,7 +232,7 @@ export default function VideoPage() {
             controller.abort();
             window.clearInterval(timer);
         };
-    }, [hasPendingLogs, token, userId]);
+    }, [hasPendingTasks, token, userId]);
 
     useEffect(() => {
         try {
@@ -723,7 +724,7 @@ export default function VideoPage() {
                 const referenceImages = [snapshot.firstFrame, ...snapshot.references, snapshot.lastFrame].filter((item): item is ReferenceImage => Boolean(item));
                 const [workflowImages, workflowVideos, workflowAudios] = await Promise.all([
                     Promise.all(referenceImages.map((item) => workflowMediaSource(item.dataUrl))),
-                    Promise.all(snapshot.videoReferences.map((item) => workflowMediaSource(item.url))),
+                    Promise.all(snapshot.videoReferences.map((item) => workflowMediaSource(item.url, snapshot.workflowRef!))),
                     Promise.all(snapshot.audioReferences.map((item) => workflowMediaSource(item.url))),
                 ]);
                 if (!active()) throw new Error("登录状态已变化");
@@ -803,6 +804,7 @@ export default function VideoPage() {
                             const settled = run.settledLog;
                             run.settledLog = undefined;
                             await saveGenerationLog(settled, active);
+                            setResults((value) => active() ? value.filter((item) => item.taskLogId !== logId && item.id !== logId) : value);
                             return;
                         }
                         if (submittedLog?.status === "失败") {
@@ -2082,6 +2084,7 @@ function ResultsPanel({
     const visibleLogs = logs.filter((log) => !liveLogIds.has(log.id) && !videoLogIdentityKeys(log).some((key) => liveResultKeys.has(key)));
     const totalCount = visibleResults.length + visibleLogs.length;
     const allSelected = Boolean(visibleLogs.length) && visibleLogs.every((log) => selectedLogIds.includes(log.id));
+    const selectedVideos = visibleLogs.flatMap((log) => selectedLogIds.includes(log.id) && log.video ? [log.video] : []);
     const toggleVisibleLogs = () => onSelectedLogIdsChange(allSelected ? selectedLogIds.filter((id) => !visibleLogs.some((log) => log.id === id)) : Array.from(new Set([...selectedLogIds, ...visibleLogs.map((log) => log.id)])));
 
     return (
@@ -2096,6 +2099,7 @@ function ResultsPanel({
                 <div className="flex shrink-0 items-center gap-2">
                     <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>新建</Button>
                     <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!visibleLogs.length} onClick={toggleVisibleLogs}>{allSelected ? "取消" : "全选"}</Button>
+                    <Button size="small" icon={<Download className="size-3.5" />} disabled={!selectedVideos.length} onClick={() => selectedVideos.forEach(onDownload)}>下载</Button>
                     <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>删除</Button>
                 </div>
             </div>

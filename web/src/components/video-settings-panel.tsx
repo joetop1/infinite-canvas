@@ -17,8 +17,8 @@ import { channelProtocolForConfig, type AiConfig } from "@/stores/use-config-sto
 export { isAPIMartKlingV26Config, isAPIMartKlingV3Config, isAPIMartKlingMotionControlConfig, isKIEKlingV3Config, kieKlingOmniVariant, isKIEKlingMotionControlConfig, isKIEGrokVideoModel } from "@/services/api/protocols/kling-models";
 
 export const videoResolutionOptions = [
-    { value: "720", label: "720p" },
     { value: "480", label: "480p" },
+    { value: "720", label: "720p" },
     { value: "1080", label: "1080p" },
     { value: "2k", label: "2K" },
     { value: "4k", label: "4K" },

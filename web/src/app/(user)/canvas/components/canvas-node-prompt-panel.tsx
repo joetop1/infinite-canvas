@@ -58,7 +58,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const config = buildNodeConfig(globalConfig, node, mode);
     const { data: autodlWorkflow } = useAutoDLWorkflow(config, mode === "video" ? config.model : "");
     const isPanorama = isPanoramaNodeType(node.type);
-    const mediaLoading = (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.status === "loading";
+    const textOverwrite = node.type === CanvasNodeType.Text && globalConfig.nodeRegenerateBehavior === "overwrite" && Boolean(node.metadata?.clientTaskId);
+    const mediaLoading = (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio || textOverwrite) && node.metadata?.status === "loading";
     const isStopping = node.metadata?.status === "stopping";
     const stopFailed = isStopping && Boolean(node.metadata?.errorDetails);
     const canStop = Boolean(node.metadata?.clientTaskId) && !node.metadata?.isBatchRoot && (mediaLoading || stopFailed);
@@ -89,14 +90,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt(sourcePrompt);
     }, [node.id, sourcePrompt]);
 
-    useEffect(() => {
-        if (node.metadata?.videoEditing && (node.metadata.status === "idle" || node.metadata.status === "error")) setPrompt(sourcePrompt);
-    }, [node.metadata?.videoEditing, node.metadata?.status, sourcePrompt]);
-
-    useEffect(() => {
-        if (node.metadata?.status === "stopped") setPrompt("");
-    }, [node.id, node.metadata?.status]);
-
     const updatePrompt = (value: string) => {
         setPrompt(value);
         onPromptChange(node.id, value);
@@ -108,7 +101,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         const text = prompt.trim();
         if (!canSubmit || generating || isStopping || modelError) return;
         onGenerate(node.id, mode, text);
-        if (!isPanorama) setPrompt("");
     };
 
     return (

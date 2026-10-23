@@ -3,6 +3,7 @@
 import {
     AlertCircle,
     BookOpen,
+    Brush,
     CheckSquare,
     ChevronDown,
     ChevronUp,
@@ -34,7 +35,9 @@ import { ImageSettingsPanel, imageFormatLabel, imageQualityLabel, imageSizeLabel
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
+import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/app/(user)/canvas/components/canvas-node-mask-edit-dialog";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { IMAGE_MASK_EDIT_PROMPT_PREFIX } from "@/lib/image-reference-prompt";
 import {
     CreativeWorkflowWorkspace,
     type WorkflowExternalTaskFailure,
@@ -158,6 +161,7 @@ export default function ImagePage() {
     const [workbenchLayout, setWorkbenchLayoutState] = useState<WorkbenchLayout>("side");
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [maskEditTarget, setMaskEditTarget] = useState<{ image: GeneratedImage; model: string; channelId: string; quality: string; size: string; open: boolean } | null>(null);
     const [workflowDrawerOpen, setWorkflowDrawerOpen] = useState(false);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
@@ -169,6 +173,7 @@ export default function ImagePage() {
     const accountHistorySyncEnabledRef = useRef(false);
     const saveLogChainRef = useRef<Promise<void>>(Promise.resolve());
     const pollingLogIdsRef = useRef(new Set<string>());
+    const pollContextRef = useRef<WorkflowPollContext | null>(null);
     const logsRef = useRef<GenerationLog[]>([]);
     const effectiveConfigRef = useRef(effectiveConfig);
 
@@ -228,6 +233,12 @@ export default function ImagePage() {
     }, [effectiveConfig]);
 
     useEffect(() => {
+        const controller = new AbortController();
+        pollContextRef.current = { token: token || "", signal: controller.signal };
+        return () => controller.abort();
+    }, [token, userId]);
+
+    useEffect(() => {
         restorePendingLogResults(logs);
     }, [logs]);
 
@@ -247,15 +258,11 @@ export default function ImagePage() {
     }, [pendingCount, pendingLogCount]);
 
     useEffect(() => {
-        if (!pendingLogCount) return;
-        const controller = new AbortController();
-        const context = { token: token || "", signal: controller.signal };
+        const context = pollContextRef.current;
+        if (!pendingLogCount || !context) return;
         pollPendingLogsOnce(logsRef.current, context);
         const timer = window.setInterval(() => pollPendingLogsOnce(logsRef.current, context), IMAGE_TASK_POLL_INTERVAL_MS);
-        return () => {
-            controller.abort();
-            window.clearInterval(timer);
-        };
+        return () => window.clearInterval(timer);
     }, [pendingLogCount, token, userId]);
 
     const setWorkbenchLayout = (layout: WorkbenchLayout) => {
@@ -414,6 +421,43 @@ export default function ImagePage() {
         const snapshot = buildRequestSnapshot({ promptText: log.prompt, referenceItems: log.references, taskCount: Number(log.config.count) || 1, configOverride: { ...log.config, ...(retryChannelId ? { imageChannelId: retryChannelId, activeChannelId: retryChannelId } : {}) }, workflowRef: log.providerWorkflowRef || null });
         if (!snapshot) return;
         await submitGenerationBatch(snapshot);
+    };
+
+    const openMaskEdit = (log: GenerationLog, image: GeneratedImage) => {
+        const nextModel = log.config.imageModel || log.model || model;
+        setMaskEditTarget({
+            image,
+            model: nextModel,
+            channelId: resolveImageChannelId(effectiveConfig, nextModel, imageTaskChannelId(log.task), log.config.imageChannelId, log.config.activeChannelId),
+            quality: log.config.quality || "auto",
+            size: log.config.size || "auto",
+            open: true,
+        });
+    };
+
+    const submitMaskEdit = async (payload: CanvasImageMaskEditPayload) => {
+        const target = maskEditTarget;
+        if (!target) return;
+        try {
+            const snapshot = buildRequestSnapshot({
+                promptText: `${IMAGE_MASK_EDIT_PROMPT_PREFIX}${payload.prompt.trim()}`,
+                taskCount: 1,
+                configOverride: {
+                    imageModel: payload.model || target.model,
+                    imageChannelId: payload.channelId || target.channelId,
+                    quality: target.quality,
+                    size: target.size,
+                },
+                workflowRef: null,
+            });
+            if (!snapshot) return;
+            setMaskEditTarget((value) => value ? { ...value, open: false } : value);
+            const stored = await uploadImage(payload.markedDataUrl);
+            const markedReference = { id: nanoid(), name: "mask-edit.png", type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, temporary: true };
+            await submitGenerationBatch({ ...snapshot, references: [markedReference] });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "局部重绘失败");
+        }
     };
 
     const submitPersistentGenerationBatch = async (snapshot: RequestSnapshot) => {
@@ -1233,6 +1277,7 @@ export default function ImagePage() {
                             onRetryLog={(log) => void retryLog(log)}
                             onCopyPrompt={copyPrompt}
                             onEdit={addResultToReferences}
+                            onMaskEdit={openMaskEdit}
                             onDownload={downloadImage}
                             onSaveAsset={saveResultToAssets}
                             syncingImageIds={syncingImageIds}
@@ -1269,6 +1314,7 @@ export default function ImagePage() {
                             onRetryLog={(log) => void retryLog(log)}
                             onCopyPrompt={copyPrompt}
                             onEdit={addResultToReferences}
+                            onMaskEdit={openMaskEdit}
                             onDownload={downloadImage}
                             onSaveAsset={saveResultToAssets}
                             syncingImageIds={syncingImageIds}
@@ -1357,6 +1403,19 @@ export default function ImagePage() {
             />
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            {maskEditTarget ? (
+                <CanvasNodeMaskEditDialog
+                    dataUrl={maskEditTarget.image.dataUrl}
+                    open={maskEditTarget.open}
+                    config={effectiveConfig}
+                    model={maskEditTarget.model}
+                    channelId={maskEditTarget.channelId}
+                    onModelChange={(nextModel, channelId) => setMaskEditTarget((value) => value ? { ...value, model: nextModel, channelId: channelId || "" } : value)}
+                    onMissingConfig={() => openConfigDialog(true)}
+                    onClose={() => setMaskEditTarget((value) => value ? { ...value, open: false } : value)}
+                    onConfirm={(payload) => void submitMaskEdit(payload)}
+                />
+            ) : null}
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
             </Modal>
@@ -1681,6 +1740,7 @@ function ResultsPanel({
     onRetryLog,
     onCopyPrompt,
     onEdit,
+    onMaskEdit,
     onDownload,
     onSaveAsset,
     syncingImageIds,
@@ -1713,6 +1773,7 @@ function ResultsPanel({
     onRetryLog: (log: GenerationLog) => void;
     onCopyPrompt: (text: string) => void | Promise<void>;
     onEdit: (image: GeneratedImage, index: number) => void;
+    onMaskEdit: (log: GenerationLog, image: GeneratedImage) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
     syncingImageIds: string[];
@@ -1732,6 +1793,7 @@ function ResultsPanel({
     const totalCount = results.length + (resultViewMode === "category" ? (activeCategoryId ? visibleLogs.length : categories.length + visibleLogs.length) : visibleLogs.length);
     const shouldShowGrid = totalCount > 0;
     const allVisibleLogsSelected = Boolean(visibleLogs.length) && visibleLogs.every((log) => selectedLogIds.includes(log.id));
+    const selectedImages = visibleLogs.flatMap((log) => selectedLogIds.includes(log.id) ? log.images.filter((image) => Boolean(image.dataUrl)) : []);
     const toggleVisibleLogs = () => onSelectedLogIdsChange(allVisibleLogsSelected ? selectedLogIds.filter((id) => !visibleLogs.some((log) => log.id === id)) : Array.from(new Set([...selectedLogIds, ...visibleLogs.map((log) => log.id)])));
     const createCategory = async () => {
         const name = categoryName.trim();
@@ -1785,6 +1847,9 @@ function ResultsPanel({
                     <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!visibleLogs.length} onClick={toggleVisibleLogs}>
                         {allVisibleLogsSelected ? "取消" : "全选"}
                     </Button>
+                    <Button size="small" icon={<Download className="size-3.5" />} disabled={!selectedImages.length} onClick={() => selectedImages.forEach(onDownload)}>
+                        下载
+                    </Button>
                     <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
                         删除
                     </Button>
@@ -1827,6 +1892,7 @@ function ResultsPanel({
                             onRetry={() => onRetryLog(log)}
                             onCopyPrompt={onCopyPrompt}
                             onEdit={onEdit}
+                            onMaskEdit={(image) => onMaskEdit(log, image)}
                             onDownload={onDownload}
                             onSaveAsset={onSaveAsset}
                             syncing={syncingImageIds.includes(log.images.find((image) => Boolean(image.dataUrl))?.id || "")}
@@ -2099,6 +2165,7 @@ function HistoryLogCard({
     onRetry,
     onCopyPrompt,
     onEdit,
+    onMaskEdit,
     onDownload,
     onSaveAsset,
     syncing,
@@ -2118,6 +2185,7 @@ function HistoryLogCard({
     onRetry: () => void;
     onCopyPrompt: (text: string) => void | Promise<void>;
     onEdit: (image: GeneratedImage, index: number) => void;
+    onMaskEdit: (image: GeneratedImage) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
     syncing: boolean;
@@ -2226,12 +2294,15 @@ function HistoryLogCard({
                 ) : null}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 border-t border-stone-200 px-2.5 py-2 dark:border-stone-800">
-                <div ref={categoryMenuRef} className="relative flex flex-wrap gap-1">
+                <div ref={categoryMenuRef} className="relative flex flex-wrap gap-1 2xl:w-full 2xl:flex-nowrap 2xl:[&>.ant-btn]:!gap-1 2xl:[&>.ant-btn]:!px-1">
                     <Button size="small" onClick={() => closeThen(onPreview)}>
                         载入
                     </Button>
                     <Button size="small" icon={<RotateCcw className="size-3.5" />} onClick={() => closeThen(onRetry)}>
                         重试
+                    </Button>
+                    <Button size="small" icon={<Brush className="size-3.5" />} onClick={() => closeThen(() => onMaskEdit(firstImage))}>
+                        局部重绘
                     </Button>
                     <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setCategoryOpen((value) => !value)}>
                         分类

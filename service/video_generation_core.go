@@ -18,17 +18,18 @@ var ErrVideoTaskKeyConflict = errors.New("同一个视频任务编号对应了�
 
 // VideoSubmission is the provider-specific outcome normalized by the adapter.
 type VideoSubmission struct {
-	ParameterTranslationSnapshot string
+	ParameterTranslationSnapshot     string
 	UpstreamTaskID, UpstreamVideoID  string
 	Status                           string
 	Progress                         int
 	Seconds, Size, VideoURL          string
 	ResponseBody, Error, ErrorDetail string
 	Accepted, Rejected               bool
+	ContentAvailable                 bool
 }
 
 type VideoGenerationInput struct {
-	ParameterTranslationSnapshot string
+	ParameterTranslationSnapshot                                          string
 	UserID, UserDisplayName, Model, ChannelID, UserChannelID, ChannelName string
 	Source, SourceID, ClientTaskID, Fingerprint                           string
 	Seconds, Size, RequestBody, BillingPath                               string
@@ -69,7 +70,7 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 	task := model.VideoTask{
 		ID: id, ClientTaskID: input.ClientTaskID, RequestFingerprint: input.Fingerprint,
 		ParameterTranslationSnapshot: input.ParameterTranslationSnapshot,
-		UserID: input.UserID, UserDisplayName: input.UserDisplayName, Model: input.Model,
+		UserID:                       input.UserID, UserDisplayName: input.UserDisplayName, Model: input.Model,
 		ChannelID: input.ChannelID, UserChannelID: input.UserChannelID, ChannelName: input.ChannelName,
 		Source: normalizeVideoTaskSource(input.Source), SourceID: strings.TrimSpace(input.SourceID),
 		Status: "queued", Phase: model.GenerationSubmitting, Revision: 1,
@@ -102,7 +103,9 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 	defer cancel()
 	stopCancel := context.AfterFunc(stopCtx, cancel)
 	defer stopCancel()
-	if stopCtx.Err() != nil { cancel() }
+	if stopCtx.Err() != nil {
+		cancel()
+	}
 	result, submitErr := submit(requestCtx)
 	if result.ParameterTranslationSnapshot != "" {
 		task.ParameterTranslationSnapshot = result.ParameterTranslationSnapshot
@@ -128,7 +131,7 @@ func SubmitVideoGeneration(ctx context.Context, input VideoGenerationInput, subm
 				Amount: task.Credits, Remark: "上游拒绝请求返还 " + input.Model, Extra: string(refundExtra), CreatedAt: task.UpdatedAt}
 			task.RefundedAt = task.UpdatedAt
 		}
-	case !result.Accepted || (task.UpstreamTaskID == "" && task.UpstreamVideoID == "" && task.VideoURL == ""):
+	case !result.Accepted || (task.UpstreamTaskID == "" && task.UpstreamVideoID == "" && task.VideoURL == "" && !result.ContentAvailable):
 		task.Phase, task.Status = model.GenerationUncertain, "failed"
 		task.Error = "上游已收到或可能已收到请求，但未返回可追踪编号。系统未重发以避免重复扣费。"
 		task.ErrorDetail, task.CompletedAt = result.ErrorDetail, task.UpdatedAt

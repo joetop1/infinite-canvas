@@ -41,6 +41,7 @@ import { isGlmTtsModel } from "@/lib/audio-generation";
 import { isGrok2APITtsConfig } from "@/lib/grok-tts";
 import { isGeminiConfig, isGeminiTtsModel } from "@/lib/gemini";
 import { isKIESeedreamLayerDecompositionModel } from "@/lib/kie-models";
+import { IMAGE_MASK_EDIT_PROMPT_PREFIX } from "@/lib/image-reference-prompt";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
 import { CanvasConfigComposer } from "../components/canvas-config-composer";
@@ -67,6 +68,7 @@ import { AssetPickerModal, type AssetPickerTab } from "../components/asset-picke
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CANVAS_ASSET_DRAG_TYPE, CanvasSidePanel } from "../components/canvas-side-panel";
 import { DEFAULT_CANVAS_AGENT_PANEL, DEFAULT_CANVAS_SIDE_PANEL, useCanvasStore } from "../stores/use-canvas-store";
+import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { assistantReferenceContentFromNode, buildNodeMentionReferences, isCanvasReferenceNode } from "../utils/canvas-resource-references";
 import { buildCanvasAgentContext } from "../agent/canvas-agent-context";
 import type { CanvasAgentAction, CanvasAgentToolResult } from "../agent/canvas-agent-tools";
@@ -118,7 +120,8 @@ type PendingPanoramaImport = {
     position: Position;
 };
 
-type CanvasNodeTaskRun = { id: string; controller: AbortController; submission?: Promise<CanvasImageTask | CanvasAudioTask | VideoResponse>; task?: CanvasImageTask | CanvasAudioTask | VideoResponse; backend?: CanvasNodeMetadata["taskBackend"]; stopping?: boolean };
+type CanvasTaskMediaSize = { mediaSize?: { content: string; width: number; height: number } };
+type CanvasNodeTaskRun = CanvasTaskMediaSize & { id: string; controller: AbortController; submission?: Promise<CanvasImageTask | CanvasAudioTask | VideoResponse>; task?: (CanvasImageTask | CanvasAudioTask | VideoResponse) & CanvasTaskMediaSize; backend?: CanvasNodeMetadata["taskBackend"]; stopping?: boolean; preparing?: symbol; generation?: symbol };
 
 type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     backgroundMode: CanvasBackgroundMode;
@@ -152,9 +155,10 @@ function formatPreviewTime(value: number) {
 
 function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata, nodeId?: string): CanvasNodeData {
     const spec = getNodeSpec(type);
+    const defaults = type === CanvasNodeType.Image || type === CanvasNodeType.Video ? useCanvasUiStore.getState().generationDefaults[type] : undefined;
     const id = nodeId || `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-    return {
+    const node: CanvasNodeData = {
         id,
         type,
         title: spec.title,
@@ -164,8 +168,9 @@ function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: C
         },
         width: spec.width,
         height: spec.height,
-        metadata: { ...spec.metadata, ...metadata },
+        metadata: { ...spec.metadata, ...defaults, ...metadata },
     };
+    return defaults?.size && metadata?.size === undefined ? applyNodeConfigPatch(node, { size: defaults.size }) : node;
 }
 
 export default function CanvasPage() {
@@ -287,7 +292,7 @@ function NodeCreateMenu({
     }, [onClose]);
 
     return (
-        <div ref={menuRef} className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur" data-canvas-no-zoom style={{ left: position.x, top: position.y, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
+        <div ref={menuRef} className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur" data-canvas-no-zoom style={{ left: position.x, top: position.y, transform: "scale(calc(var(--canvas-inverse-scale) * 0.9))", transformOrigin: "top left", background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between px-1">
                 <span className="text-sm font-medium" style={{ color: theme.node.muted }}>添加节点</span>
                 <button type="button" className="grid size-7 place-items-center rounded-lg opacity-55 transition hover:opacity-100" onClick={onClose} aria-label="关闭">×</button>
@@ -464,24 +469,23 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const pollingAudioNodeIdsRef = useRef(new Map<string, AbortController>());
     const hasLoadingTimedNodes = nodes.some((node) => node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && (node.type === CanvasNodeType.Video || isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Audio));
 
-    const rememberNodeTask = useCallback((nodeId: string, id: string | undefined, task: CanvasImageTask | CanvasAudioTask | VideoResponse) => {
+    const rememberNodeTask = useCallback(<T extends CanvasImageTask | CanvasAudioTask | VideoResponse,>(nodeId: string, id: string | undefined, task: T) => {
         const run = nodeTaskRunsRef.current.get(`${nodeId}:${id}`);
-        if (!run || run.controller.signal.aborted || (run.task && canvasVideoTaskCompleted(run.task) && !canvasVideoTaskCompleted(task) && !canvasTaskFailed(task.status))) return;
-        run.task = task;
+        if (!run || run.controller.signal.aborted || (run.task && canvasVideoTaskCompleted(run.task) && !canvasVideoTaskCompleted(task) && !canvasTaskFailed(task.status))) return task;
+        const next = run.mediaSize && run.mediaSize.content === canvasTaskMediaURL(task) ? { ...task, mediaSize: run.mediaSize } : task;
+        run.task = next;
+        return next;
     }, []);
 
-    const submitNodeTask = useCallback(<T extends CanvasImageTask | CanvasAudioTask | VideoResponse,>(nodeId: string, id: string, request: (signal: AbortSignal, onServerTask: (backend?: "account" | "workflow") => void) => Promise<T>) => {
+    const submitNodeTask = useCallback(<T extends CanvasImageTask | CanvasAudioTask | VideoResponse,>(nodeId: string, id: string, request: (signal: AbortSignal, onServerTask: (backend?: "account" | "workflow") => void) => Promise<T>, generation?: symbol) => {
         const controller = new AbortController();
-        const run: CanvasNodeTaskRun = { id, controller };
+        const run: CanvasNodeTaskRun = { id, controller, generation };
         nodeTaskRunsRef.current.set(nodeId, run);
         nodeTaskRunsRef.current.set(`${nodeId}:${id}`, run);
         const submission = request(controller.signal, (backend = "account") => {
             run.backend = backend;
             setNodes((prev) => prev.map((node) => node.id === nodeId && node.metadata?.clientTaskId === id ? { ...node, metadata: { ...node.metadata, taskBackend: backend } } : node));
-        }).then((task) => {
-            rememberNodeTask(nodeId, id, task);
-            return task;
-        }, (error) => {
+        }).then((task) => rememberNodeTask(nodeId, id, task), (error) => {
             if (!nodeTaskRunsRef.current.get(`${nodeId}:${id}`)?.task) rememberNodeTask(nodeId, id, { id, source: run.backend === "workflow" ? "workflow" : undefined, status: "failed", error: { message: error instanceof Error ? error.message : "生成失败" } });
             throw error;
         });
@@ -497,9 +501,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
     const handleStopNode = useCallback(async (nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
-        const id = node?.metadata?.clientTaskId;
-        if (!node || !id || node.metadata?.isBatchRoot || (node.metadata?.status !== "loading" && node.metadata?.status !== "stopping")) return;
-        const kind = isCanvasImageNodeType(node.type) ? "image" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : null;
+        const id = nodeTaskRunsRef.current.get(nodeId)?.id || node?.metadata?.clientTaskId;
+        if (!node || !id || node.metadata?.isBatchRoot || (node.metadata?.status !== "loading" && node.metadata?.status !== "stopping" && !nodeTaskRunsRef.current.get(nodeId)?.submission)) return;
+        const kind = isCanvasImageNodeType(node.type) ? "image" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : node.type === CanvasNodeType.Text ? "text" : null;
         if (!kind) return;
         const run: CanvasNodeTaskRun = nodeTaskRunsRef.current.get(nodeId) || { id, controller: new AbortController(), backend: node.metadata?.taskBackend };
         if (run.id !== id || run.stopping) return;
@@ -511,16 +515,16 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             setNodes(apply);
             for (const entry of [...historyRef.current.past, ...historyRef.current.future, ...(lastHistoryRef.current ? [lastHistoryRef.current] : [])]) entry.nodes = apply(entry.nodes);
         };
-        const root = nodesRef.current.find((item) => item.id === node.metadata?.batchRootId && item.metadata?.isBatchRoot && item.metadata.primaryImageId === nodeId);
-        updateTaskNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.clientTaskId === id) || (item.id === root?.id && item.metadata?.primaryImageId === nodeId) ? { ...item, metadata: { ...item.metadata, status: "stopping", errorDetails: undefined } } : item));
+        const root = nodesRef.current.find((item) => item.id === node.metadata?.batchRootId && item.metadata?.isBatchRoot && item.metadata.primaryImageId === nodeId && !(item.metadata.clientTaskId && item.metadata.imageTaskId === item.metadata.clientTaskId && [NODE_STATUS_LOADING, "stopping"].includes(item.metadata.status || "")));
+        updateTaskNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.clientTaskId === id) || (item.id === root?.id && item.metadata?.primaryImageId === nodeId && item.metadata?.imageTaskId === root?.metadata?.imageTaskId) ? { ...item, metadata: { ...item.metadata, status: "stopping", errorDetails: undefined } } : item));
         try {
-            if (run.backend) {
+            if (run.backend && kind !== "text") {
                 if (kind !== "video" || run.backend === "workflow") await run.submission?.catch(() => undefined);
                 const result = await stopCanvasTask(kind, id, run.backend === "workflow");
                 if (!result.stopped) {
                     updateTaskNodes((prev) => prev.map((item) =>
                         ((item.id === nodeId && item.metadata?.clientTaskId === id)
-                            || (item.id === root?.id && item.metadata?.primaryImageId === nodeId))
+                            || (item.id === root?.id && item.metadata?.primaryImageId === nodeId && item.metadata?.imageTaskId === root?.metadata?.imageTaskId))
                             && item.metadata?.status === "stopping"
                             ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, ...(item.id === nodeId && run.backend === "workflow" && run.task?.id ? { [`${kind}TaskId`]: run.task.id } : {}) } }
                             : item,
@@ -530,14 +534,14 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             }
             run.controller.abort();
             pollingImageNodeIdsRef.current.get(nodeId)?.abort();
-            if (root) pollingImageNodeIdsRef.current.get(root.id)?.abort();
+            if (root && nodesRef.current.some((item) => item.id === root.id && item.metadata?.imageTaskId === root.metadata?.imageTaskId)) pollingImageNodeIdsRef.current.get(root.id)?.abort();
             pollingVideoNodeIdsRef.current.get(nodeId)?.abort();
             pollingAudioNodeIdsRef.current.get(nodeId)?.abort();
-            updateTaskNodes((prev) => prev.map((item) => ((item.id === nodeId && item.metadata?.clientTaskId === id && item.metadata?.status === "stopping") || (item.id === node.metadata?.batchRootId && item.metadata?.primaryImageId === nodeId && item.metadata.status === "stopping")) ? { ...item, metadata: { ...item.metadata, ...(item.metadata?.batchRootId ? { count: 1 } : {}), status: "stopped", durationMs: Date.now() - (item.metadata?.startedAt || Date.now()), errorDetails: undefined } } : item));
+            updateTaskNodes((prev) => prev.map((item) => ((item.id === nodeId && item.metadata?.clientTaskId === id && item.metadata?.status === "stopping") || (item.id === root?.id && item.metadata?.primaryImageId === nodeId && item.metadata.imageTaskId === root?.metadata?.imageTaskId && item.metadata.status === "stopping")) ? { ...item, metadata: { ...item.metadata, ...(item.metadata?.batchRootId ? { count: 1 } : {}), status: "stopped", durationMs: Date.now() - (item.metadata?.startedAt || Date.now()), errorDetails: undefined } } : item));
         } catch (error) {
             const errorDetails = error instanceof Error ? error.message : "停止失败，请重试停止";
             message.error(errorDetails);
-            updateTaskNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.clientTaskId === id) || (item.id === root?.id && item.metadata?.primaryImageId === nodeId && item.metadata.status === "stopping") ? { ...item, metadata: { ...item.metadata, errorDetails } } : item));
+            updateTaskNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.clientTaskId === id) || (item.id === root?.id && item.metadata?.primaryImageId === nodeId && item.metadata?.imageTaskId === root?.metadata?.imageTaskId && item.metadata.status === "stopping") ? { ...item, metadata: { ...item.metadata, errorDetails } } : item));
         } finally {
             run.stopping = false;
         }
@@ -685,7 +689,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 const retainedNodes = [...current.nodes, ...last.nodes, ...historyRef.current.past.slice(-9).flatMap((entry) => entry.nodes)];
                 const retainedRuns = new Set(retainedNodes.map((node) => `${node.id}:${node.metadata?.clientTaskId || ""}`));
                 nodeTaskRunsRef.current.forEach((run, key) => {
-                    if (key.includes(":") && !retainedRuns.has(key)) { delete run.task; nodeTaskRunsRef.current.delete(key); }
+                    if (key.includes(":") && !retainedRuns.has(key)) { delete run.task; delete run.mediaSize; nodeTaskRunsRef.current.delete(key); }
                 });
             }
             historyRef.current.past = [...historyRef.current.past.slice(-9), last];
@@ -733,9 +737,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 void (node.metadata?.workflowRef
                     ? getWorkflowTask(workflowToken, taskId, controller.signal).then((task) => workflowVideoTask(task, workflowToken))
                     : pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata), controller.signal))
-                    .then((task) => {
+                    .then((result) => {
                         if (controller.signal.aborted) return;
-                        rememberNodeTask(node.id, node.metadata?.clientTaskId, task);
+                        const task = rememberNodeTask(node.id, node.metadata?.clientTaskId, result);
                         if (!isNodeTaskActive(node.id, node.metadata?.clientTaskId)) return;
                         setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }, node.metadata?.clientTaskId));
                     })
@@ -753,9 +757,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 void (node.metadata.workflowRef
                     ? getWorkflowTask(workflowToken, node.metadata.imageTaskId, controller.signal).then((task) => workflowImageTask(task, workflowToken))
                     : pollCanvasImageTaskStatus(node.metadata.imageTaskId, controller.signal))
-                    .then((task) => {
+                    .then((result) => {
                         if (controller.signal.aborted) return;
-                        rememberNodeTask(node.metadata?.clientTaskId ? node.id : node.metadata?.primaryImageId || node.id, node.metadata?.clientTaskId || node.metadata?.imageTaskId, task);
+                        const task = rememberNodeTask(node.metadata?.clientTaskId ? node.id : node.metadata?.primaryImageId || node.id, node.metadata?.clientTaskId || node.metadata?.imageTaskId, result);
                         if (!node.metadata?.isBatchRoot && !isNodeTaskActive(node.id, node.metadata?.clientTaskId)) return;
                         setNodes((prev) => applyCanvasImageTaskUpdate(prev, node.id, task, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }, node.metadata?.clientTaskId));
                         setConnections((prev) => node.metadata?.isBatchRoot || isNodeTaskActive(node.id, node.metadata?.clientTaskId) ? applyCanvasImageTaskConnections(prev, node.id, task, node.metadata?.batchRootId) : prev);
@@ -1273,14 +1277,18 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 if (!nextNode.metadata?.isBatchRoot || childIds?.length === nextNode.metadata.batchChildIds?.length) return nextNode;
                 const primaryImageId = childIds?.includes(nextNode.metadata.primaryImageId || "") ? nextNode.metadata.primaryImageId : childIds?.[0];
                 const primaryNode = remainingNodes.find((item) => item.id === primaryImageId);
+                const syncPrimary = primaryImageId !== nextNode.metadata.primaryImageId && nextNode.type === CanvasNodeType.Image && !nextNode.metadata.clientTaskId;
                 return {
                     ...nextNode,
                     metadata: {
                         ...nextNode.metadata,
                         batchChildIds: childIds,
                         primaryImageId,
-                        content: primaryNode?.metadata?.content || nextNode.metadata.content,
-                        storageKey: primaryNode?.metadata?.content ? primaryNode.metadata.storageKey : nextNode.metadata.storageKey,
+                        status: syncPrimary ? primaryNode?.metadata?.status : nextNode.metadata.status,
+                        imageTaskId: syncPrimary ? (primaryNode?.metadata?.workflowRef ? undefined : primaryNode?.metadata?.imageTaskId) : nextNode.metadata.imageTaskId,
+                        workflowRef: syncPrimary ? primaryNode?.metadata?.workflowRef : nextNode.metadata.workflowRef,
+                        content: primaryNode?.metadata?.content || (syncPrimary ? undefined : nextNode.metadata.content),
+                        storageKey: primaryNode?.metadata?.content ? primaryNode.metadata.storageKey : syncPrimary ? "" : nextNode.metadata.storageKey,
                         bytes: primaryNode?.metadata?.content ? primaryNode.metadata.bytes : nextNode.metadata.bytes,
                         mimeType: primaryNode?.metadata?.content ? primaryNode.metadata.mimeType : nextNode.metadata.mimeType,
                         naturalWidth: primaryNode?.metadata?.naturalWidth || nextNode.metadata.naturalWidth,
@@ -1523,17 +1531,26 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             historyCommitTimerRef.current = null;
         }
         applyingHistoryRef.current = true;
-        let restoredNodes = entry.nodes;
         let restoredConnections = entry.connections;
-        for (const node of entry.nodes) {
+        const pendingRestores: [CanvasNodeData, CanvasNodeTaskRun][] = [];
+        let mediaSizeChanged = false;
+        let restoredNodes = entry.nodes.map((node) => {
             const id = node.metadata?.clientTaskId;
             if (!id) {
-                if (nodeTaskRunsRef.current.has(node.id)) nodeTaskRunsRef.current.set(node.id, { id: "", controller: new AbortController() });
-                continue;
+                if (nodeTaskRunsRef.current.get(node.id)?.id) nodeTaskRunsRef.current.set(node.id, { id: "", controller: new AbortController() });
+                return node;
             }
             const run: CanvasNodeTaskRun = nodeTaskRunsRef.current.get(`${node.id}:${id}`) || { id, controller: new AbortController(), backend: node.metadata?.taskBackend };
             nodeTaskRunsRef.current.set(node.id, run);
             nodeTaskRunsRef.current.set(`${node.id}:${id}`, run);
+            if (run.backend || (run.task && !run.controller.signal.aborted && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content)) pendingRestores.push([node, run]);
+            const updated = fitCanvasMediaNode(node, run.mediaSize);
+            mediaSizeChanged ||= updated !== node;
+            return updated;
+        });
+        if (!mediaSizeChanged) restoredNodes = entry.nodes;
+        for (const [node, run] of pendingRestores) {
+            const id = node.metadata!.clientTaskId!;
             if (run.backend) restoredNodes = restoredNodes.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, taskBackend: run.backend } } : item);
             if (!run.task || run.controller.signal.aborted || node.metadata?.status !== NODE_STATUS_LOADING || node.metadata.content) continue;
             const startedAt = node.metadata.startedAt || Date.now();
@@ -1551,6 +1568,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             }
         }
         const restoredEntry = { ...entry, nodes: restoredNodes, connections: restoredConnections };
+        lastHistoryRef.current = restoredEntry;
         nodesRef.current = restoredNodes;
         connectionsRef.current = restoredConnections;
         setNodes(restoredNodes);
@@ -1562,7 +1580,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         setContextMenu(null);
         setReferencePickerNodeId(null);
         setTimeout(() => {
-            lastHistoryRef.current = restoredEntry;
             applyingHistoryRef.current = false;
             setHistoryState({ canUndo: historyRef.current.past.length > 0, canRedo: historyRef.current.future.length > 0 });
         });
@@ -2131,8 +2148,38 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         [screenToCanvas, setConnecting],
     );
 
-    const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
+    const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position, loadedNode?: CanvasNodeData) => {
+        if (!loadedNode) {
+            setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
+            return;
+        }
+        const metadata = loadedNode.metadata;
+        if (!width || !height || !metadata?.clientTaskId || !metadata.content || metadata.isBatchRoot || metadata.batchRootId) return;
+        if (loadedNode.type !== CanvasNodeType.Image && loadedNode.type !== CanvasNodeType.Video) return;
+        const mediaSize = { content: metadata.content, width, height };
+        const run = nodeTaskRunsRef.current.get(`${nodeId}:${metadata.clientTaskId}`);
+        if (run) {
+            run.mediaSize = mediaSize;
+            if (run.task && canvasTaskMediaURL(run.task) === mediaSize.content) run.task = { ...run.task, mediaSize };
+        }
+
+        if (fitCanvasMediaNode(loadedNode, mediaSize) === loadedNode) return;
+        const updates = new Map<CanvasNodeData[], CanvasNodeData[]>();
+        setNodes((items) => {
+            const cached = updates.get(items);
+            if (cached) return cached;
+            let changed = false;
+            const next = items.map((item) => {
+                if (item.id !== nodeId || item.metadata?.clientTaskId !== metadata.clientTaskId) return item;
+                const updated = fitCanvasMediaNode(item, mediaSize);
+                changed ||= updated !== item;
+                return updated;
+            });
+            const result = changed ? next : items;
+            updates.set(items, result);
+            if (lastHistoryRef.current?.nodes === items) lastHistoryRef.current.nodes = result;
+            return result;
+        });
     }, []);
 
     const toggleNodeFreeResize = useCallback((nodeId: string) => {
@@ -2202,7 +2249,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             bytes: child.metadata?.bytes,
                             mimeType: child.metadata?.mimeType,
                             primaryImageId: child.id,
-                            status: node.metadata?.status === "stopping" || node.metadata?.status === "stopped" ? child.metadata?.status : node.metadata?.status,
+                            status: (node.type === CanvasNodeType.Image && !node.metadata?.clientTaskId) || node.metadata?.status === "stopping" || node.metadata?.status === "stopped" ? child.metadata?.status : node.metadata?.status,
+                            imageTaskId: node.type === CanvasNodeType.Image && !node.metadata?.clientTaskId ? child.metadata?.imageTaskId : node.metadata?.imageTaskId,
                             naturalWidth: child.metadata?.naturalWidth,
                             naturalHeight: child.metadata?.naturalHeight,
                             freeResize: child.metadata?.freeResize,
@@ -2220,6 +2268,14 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
     const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
+        const type = nodesRef.current.find((node) => node.id === nodeId)?.type;
+        if (type === CanvasNodeType.Image || type === CanvasNodeType.Video) {
+            const settings = Object.fromEntries(Object.entries(patch || {}).filter(([key, value]) =>
+                value !== undefined && (key === "size" || key === (type === CanvasNodeType.Image ? "quality" : "vquality"))));
+            if (Object.keys(settings).length) useCanvasUiStore.setState((state) => ({
+                generationDefaults: { ...state.generationDefaults, [type]: { ...state.generationDefaults[type], ...settings } },
+            }));
+        }
     }, []);
 
     const handleDirectorProjectChange = useCallback(
@@ -2420,7 +2476,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const mediaUrl = await resolveMediaUrl(node.metadata.storageKey, node.metadata.content);
             const filename = `canvas-${node.type}-${node.id}.${isAudio ? audioExtension(node.metadata.mimeType) : "mp4"}`;
             const uploaded = await uploadRemoteMediaToServer(mediaUrl, filename);
-            setNodes((nodes) => nodes.map((item) => (item.id === node.id ? {
+            setNodes((nodes) => nodes.some((item) => item.id === node.id && item.metadata?.content === node.metadata?.content && item.metadata?.storageKey === node.metadata?.storageKey) ? nodes.map((item) => (item.id === node.id ? {
                 ...item,
                 metadata: {
                     ...item.metadata,
@@ -2431,7 +2487,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     naturalWidth: uploaded.width || item.metadata?.naturalWidth,
                     naturalHeight: uploaded.height || item.metadata?.naturalHeight,
                 },
-            } : item)));
+            } : item)) : nodes);
             message.success(`${mediaName}已上传至云存储`);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "";
@@ -2453,7 +2509,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         try {
             const imageUrl = await resolveImageUrl(node.metadata.storageKey, node.metadata.content);
             const uploaded = await uploadRemoteImageToServer(imageUrl, "canvas-image-" + node.id + ".png");
-            setNodes((nodes) => nodes.map((item) => (item.id === node.id ? {
+            setNodes((nodes) => nodes.some((item) => item.id === node.id && item.metadata?.content === node.metadata?.content && item.metadata?.storageKey === node.metadata?.storageKey) ? nodes.map((item) => (item.id === node.id ? {
                 ...item,
                 metadata: {
                     ...item.metadata,
@@ -2464,7 +2520,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     naturalWidth: uploaded.width || item.metadata?.naturalWidth,
                     naturalHeight: uploaded.height || item.metadata?.naturalHeight,
                 },
-            } : item)));
+            } : item)) : nodes);
             setChatSessions((sessions) => syncAssistantReferences(sessions, [{
                 ...node,
                 metadata: {
@@ -2473,7 +2529,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     storageKey: uploaded.storageKey,
                     mimeType: uploaded.mimeType,
                 },
-            }]));
+            }], false, node));
             message.success("图片已上传至云存储");
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "";
@@ -2686,7 +2742,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 return;
             }
             const userPrompt = payload.prompt.trim();
-            const prompt = `参考图中蓝色高亮覆盖区域是需要修改的位置，蓝色只是编辑标记，不要保留在最终图像中。只修改蓝色高亮区域，其他区域的构图、人物、文字、光影和风格保持不变。修改要求：${userPrompt}`;
+            const prompt = `${IMAGE_MASK_EDIT_PROMPT_PREFIX}${userPrompt}`;
             const childId = nanoid();
             const clientTaskId = `client_image_task_${nanoid()}`;
             const markedReference = { id: `${node.id}-marked`, name: `image-${node.id}-marked.png`, type: "image/png", dataUrl: payload.markedDataUrl };
@@ -2824,6 +2880,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const target = uploadTargetRef.current;
             if (!file || (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isAudioFile(file))) return;
             const targetNode = target?.nodeId ? nodesRef.current.find((node) => node.id === target.nodeId) : null;
+            const targetRun = target?.nodeId ? nodeTaskRunsRef.current.get(target.nodeId) : undefined;
+            const targetToken = targetRun?.preparing || targetRun?.generation || targetRun?.controller;
             if (isPanoramaNodeType(targetNode?.type) && !file.type.startsWith("image/")) {
                 message.warning("全景图节点仅支持上传图片作为参考");
                 uploadTargetRef.current = null;
@@ -2834,23 +2892,31 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             if (target?.nodeId) {
                 const hideLoading = message.loading(isAudioFile(file) ? "正在上传音频..." : file.type.startsWith("video/") ? "正在上传视频..." : "正在上传图片...", 0);
                 try {
-                    if (isAudioFile(file)) {
-                        const audio = await uploadMediaFile(file, "audio");
+                    const audio = isAudioFile(file) ? await uploadMediaFile(file, "audio") : null;
+                    const video = !audio && file.type.startsWith("video/") ? await uploadMediaFile(file, "video") : null;
+                    const image = !audio && !video ? await uploadImage(file) : null;
+                    const canApplyUpload = (nodeTaskRunsRef.current.get(target.nodeId)?.preparing || nodeTaskRunsRef.current.get(target.nodeId)?.generation || nodeTaskRunsRef.current.get(target.nodeId)?.controller) === targetToken && nodesRef.current.some((node) => node.id === target.nodeId);
+                    if (canApplyUpload) {
+                        if (targetRun && targetRun.preparing === targetToken) delete targetRun.preparing;
+                        if (targetRun) nodeTaskRunsRef.current.set(target.nodeId, { id: "", controller: targetRun.controller, generation: typeof targetToken === "symbol" ? targetToken : undefined });
+                        pollingImageNodeIdsRef.current.get(target.nodeId)?.abort();
+                        pollingVideoNodeIdsRef.current.get(target.nodeId)?.abort();
+                        pollingAudioNodeIdsRef.current.get(target.nodeId)?.abort();
+                    }
+                    if (audio && canApplyUpload) {
                         const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
-                        setNodes((prev) => prev.map((node) => (node.id === target.nodeId ? { ...node, type: CanvasNodeType.Audio, title: file.name, position: { x: node.position.x + node.width / 2 - spec.width / 2, y: node.position.y + node.height / 2 - spec.height / 2 }, width: spec.width, height: spec.height, metadata: { ...node.metadata, ...audioMetadata(audio), errorDetails: undefined } } : node)));
+                        setNodes((prev) => (nodeTaskRunsRef.current.get(target.nodeId)?.preparing || nodeTaskRunsRef.current.get(target.nodeId)?.generation || nodeTaskRunsRef.current.get(target.nodeId)?.controller) === targetToken && prev.some((node) => node.id === target.nodeId) ? prev.map((node) => (node.id === target.nodeId ? { ...node, type: CanvasNodeType.Audio, title: file.name, position: { x: node.position.x + node.width / 2 - spec.width / 2, y: node.position.y + node.height / 2 - spec.height / 2 }, width: spec.width, height: spec.height, metadata: { ...node.metadata, ...audioMetadata(audio), clientTaskId: undefined, taskBackend: undefined, errorDetails: undefined } } : node)) : prev);
                         setSelectedNodeIds(new Set([target.nodeId]));
                         setSelectedConnectionId(null);
-                    } else if (file.type.startsWith("video/")) {
-                        const video = await uploadMediaFile(file, "video");
+                    } else if (video && canApplyUpload) {
                         const nextSize = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                        setNodes((prev) => prev.map((node) => (node.id === target.nodeId ? { ...node, type: CanvasNodeType.Video, title: file.name, position: { x: node.position.x + node.width / 2 - nextSize.width / 2, y: node.position.y + node.height / 2 - nextSize.height / 2 }, width: nextSize.width, height: nextSize.height, metadata: { ...node.metadata, ...videoMetadata(video), errorDetails: undefined } } : node)));
+                        setNodes((prev) => (nodeTaskRunsRef.current.get(target.nodeId)?.preparing || nodeTaskRunsRef.current.get(target.nodeId)?.generation || nodeTaskRunsRef.current.get(target.nodeId)?.controller) === targetToken && prev.some((node) => node.id === target.nodeId) ? prev.map((node) => (node.id === target.nodeId ? { ...node, type: CanvasNodeType.Video, title: file.name, position: { x: node.position.x + node.width / 2 - nextSize.width / 2, y: node.position.y + node.height / 2 - nextSize.height / 2 }, width: nextSize.width, height: nextSize.height, metadata: { ...node.metadata, ...videoMetadata(video), clientTaskId: undefined, taskBackend: undefined, errorDetails: undefined } } : node)) : prev);
                         setSelectedNodeIds(new Set([target.nodeId]));
                         setSelectedConnectionId(null);
                         setDialogNodeId(target.nodeId);
-                    } else {
-                        const image = await uploadImage(file);
+                    } else if (image && canApplyUpload) {
                         const size = fitNodeSize(image.width, image.height);
-                        setNodes((prev) =>
+                        setNodes((prev) => (nodeTaskRunsRef.current.get(target.nodeId)?.preparing || nodeTaskRunsRef.current.get(target.nodeId)?.generation || nodeTaskRunsRef.current.get(target.nodeId)?.controller) === targetToken && prev.some((node) => node.id === target.nodeId) ?
                             prev.map((node) => {
                                 if (node.id !== target.nodeId) return node;
                                 const isPanorama = isPanoramaNodeType(node.type);
@@ -2865,6 +2931,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                     metadata: {
                                         ...node.metadata,
                                         ...imageMetadata(image),
+                                        clientTaskId: undefined,
+                                        taskBackend: undefined,
                                         errorDetails: undefined,
                                         freeResize: false,
                                         isBatchRoot: undefined,
@@ -2886,7 +2954,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                         panoramaProjection: undefined,
                                     },
                                 };
-                            }),
+                            }) : prev,
                         );
                         setSelectedNodeIds(new Set([target.nodeId]));
                         setSelectedConnectionId(null);
@@ -3000,11 +3068,19 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 return;
             }
 
+            const overwriteExisting = effectiveConfig.nodeRegenerateBehavior === "overwrite" && sourceNode?.type === mode && !sourceNode.metadata?.isBatchRoot
+                && Boolean(sourceNode.metadata?.content || sourceNode.metadata?.clientTaskId)
+                && (mode !== "image" || workflowRef || !isKIESeedreamLayerDecompositionModel(generationConfig.model));
             const runningRequest = Symbol();
             runningRequestRef.current = runningRequest;
             setRunningNodeId(nodeId);
+            const preparingRun: CanvasNodeTaskRun | undefined = overwriteExisting ? nodeTaskRunsRef.current.get(nodeId) || { id: "", controller: new AbortController() } : undefined;
+            if (preparingRun) {
+                preparingRun.preparing = runningRequest;
+                nodeTaskRunsRef.current.set(nodeId, preparingRun);
+            }
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
-            const editingTextNode = mode === "text" && Boolean(sourceTextContent);
+            const editingTextNode = mode === "text" && Boolean(sourceTextContent) && !overwriteExisting;
             const generationContext = await hydrateNodeGenerationContext(
                 buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
             );
@@ -3021,10 +3097,31 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             }
             let pendingChildIds: string[] = [];
             let submittedTask: { nodeId: string; id: string } | undefined;
+            const textTaskId = mode === "text" ? `client_text_task_${nanoid()}` : "";
             const generationStartedAt = Date.now();
-            if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: statusPrompt, status: NODE_STATUS_LOADING, startedAt: generationStartedAt, durationMs: undefined, errorDetails: undefined } } : node)));
-
             try {
+                if (overwriteExisting && (nodeTaskRunsRef.current.get(nodeId) !== preparingRun || preparingRun?.preparing !== runningRequest)) return;
+                const currentStatus = nodesRef.current.find((node) => node.id === nodeId)?.metadata?.status;
+                if (preparingRun?.id && !preparingRun.controller.signal.aborted
+                    && (preparingRun.submission || currentStatus === "loading" || currentStatus === "stopping")
+                    && !canvasTaskCompleted(preparingRun.task?.status) && !canvasTaskFailed(preparingRun.task?.status)) {
+                    await handleStopNode(nodeId);
+                    if (nodeTaskRunsRef.current.get(nodeId) !== preparingRun || preparingRun.preparing !== runningRequest
+                        || (!preparingRun.controller.signal.aborted
+                            && !canvasTaskCompleted(preparingRun.task?.status) && !canvasTaskFailed(preparingRun.task?.status))) return;
+                }
+                if (overwriteExisting && !nodesRef.current.some((node) => node.id === nodeId && !node.metadata?.isBatchRoot)) return;
+                if (mode !== "audio" && preparingRun?.preparing === runningRequest) delete preparingRun.preparing;
+                if (markSourceStatus) setNodes((prev) => prev.map((node) => node.id === nodeId ? {
+                    ...node,
+                    metadata: {
+                        ...node.metadata, prompt: statusPrompt,
+                        ...(mode === "text" && sourceNode?.type !== CanvasNodeType.Config ? { clientTaskId: textTaskId, taskBackend: undefined } : {}),
+                        ...(overwriteExisting ? { content: undefined, storageKey: "" } : {}),
+                        status: NODE_STATUS_LOADING, startedAt: generationStartedAt,
+                        durationMs: undefined, errorDetails: undefined,
+                    },
+                } : node));
                 if (mode === "image" && isPanoramaNodeType(sourceNode?.type)) {
                     const panoramaSourcePrompt = prompt.trim();
                     const sourceReference: ReferenceImage[] = sourceNode?.metadata?.content
@@ -3185,9 +3282,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     const count = !workflowRef && isKIESeedreamLayerDecompositionModel(generationConfig.model) ? 1 : getGenerationCount(generationConfig.count);
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
-                    const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
+                    const isEmptyImageNode = isImageNode && (overwriteExisting || !sourceNode?.metadata?.content);
+                    const batchRoot = overwriteExisting && sourceNode?.metadata?.batchRootId ? nodesRef.current.find((node) => node.id === sourceNode.metadata?.batchRootId && node.metadata?.isBatchRoot) : undefined;
+                    const createBatchRoot = count > 1 && !batchRoot;
                     const sourceReference =
-                        isImageNode && sourceNode?.metadata?.content
+                        isImageNode && sourceNode?.metadata?.content && !overwriteExisting
                             ? [{ id: sourceNode.id, name: `image-${sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
                             : [];
                     const referenceImages = [...generationContext.referenceImages, ...sourceReference];
@@ -3200,8 +3299,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     const gap = 96;
                     const rowGap = 36;
                     const rootId = isEmptyImageNode ? nodeId : nanoid();
-                    const childIds = count > 1 ? Array.from({ length: count }, () => nanoid()) : [];
-                    const targetIds = count > 1 ? childIds : [rootId];
+                    const displayRootId = batchRoot?.id || rootId;
+                    const childIds = Array.from({ length: createBatchRoot ? count : batchRoot ? count - 1 : 0 }, () => nanoid());
+                    const targetIds = createBatchRoot ? childIds : [rootId, ...childIds];
                     const targetTaskIds = Object.fromEntries(targetIds.map((id) => [id, `client_image_task_${nanoid()}`]));
                     const primaryTargetId = targetIds[0];
                     pendingChildIds = isEmptyImageNode ? childIds : [rootId, ...childIds];
@@ -3221,15 +3321,16 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             status: NODE_STATUS_LOADING,
                             startedAt: generationStartedAt,
                             progress: 0,
-                            clientTaskId: count > 1 ? undefined : targetTaskIds[rootId],
-                            imageTaskId: workflowRef && count > 1 ? undefined : primaryTargetId ? targetTaskIds[primaryTargetId] : undefined,
-                            primaryImageId: count > 1 ? primaryTargetId : undefined,
-                            isBatchRoot: count > 1,
-                            batchChildIds: count > 1 ? childIds : undefined,
+                            clientTaskId: createBatchRoot ? undefined : targetTaskIds[rootId],
+                            imageTaskId: workflowRef && createBatchRoot ? undefined : primaryTargetId ? targetTaskIds[primaryTargetId] : undefined,
+                            primaryImageId: createBatchRoot ? primaryTargetId : undefined,
+                            isBatchRoot: createBatchRoot,
+                            batchChildIds: createBatchRoot ? childIds : undefined,
+                            ...(batchRoot ? { batchRootId: batchRoot.id } : {}),
                             batchUsesReferenceImages: referenceImages.length > 0,
                             ...generationMetadata,
                             workflowRef,
-                            imageBatchExpanded: count > 1 ? true : undefined,
+                            imageBatchExpanded: createBatchRoot ? true : undefined,
                         },
                     };
                     const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
@@ -3242,13 +3343,36 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         },
                         width: imageSize.width,
                         height: imageSize.height,
-                        metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, startedAt: generationStartedAt, progress: 0, clientTaskId: targetTaskIds[id], imageTaskId: targetTaskIds[id], batchRootId: count > 1 ? rootId : undefined, ...generationMetadata, workflowRef },
+                        metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, startedAt: generationStartedAt, progress: 0, clientTaskId: targetTaskIds[id], imageTaskId: targetTaskIds[id], batchRootId: batchRoot?.id || (createBatchRoot ? rootId : undefined), ...generationMetadata, workflowRef },
                     }));
-                    const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
+                    const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: displayRootId, toNodeId: childId }))];
 
+                    if (overwriteExisting && createBatchRoot) {
+                        if (historyCommitTimerRef.current) clearTimeout(historyCommitTimerRef.current);
+                        nodeTaskRunsRef.current.set(rootId, { id: "", controller: new AbortController(), generation: runningRequest });
+                        nodesRef.current = nodesRef.current.map((node) => node.id === rootId
+                            ? { ...node, metadata: { ...node.metadata, isBatchRoot: true } } : node);
+                    }
                     setNodes((prev) => [
                         ...prev.map((node) =>
-                            node.id === nodeId
+                            node.id === batchRoot?.id && (childIds.length || node.metadata?.primaryImageId === nodeId)
+                                ? {
+                                    ...node,
+                                    metadata: {
+                                        ...node.metadata,
+                                        batchChildIds: [...(node.metadata?.batchChildIds || []), ...childIds],
+                                        ...(node.metadata?.primaryImageId === nodeId
+                                            && !(node.metadata.clientTaskId && node.metadata.imageTaskId === node.metadata.clientTaskId
+                                                && [NODE_STATUS_LOADING, "stopping"].includes(node.metadata.status || "")) ? {
+                                            content: undefined, storageKey: "", status: NODE_STATUS_LOADING,
+                                            errorDetails: undefined, clientTaskId: undefined,
+                                            imageTaskId: workflowRef ? undefined : targetTaskIds[nodeId],
+                                            imageTaskResultId: undefined, workflowRef,
+                                            startedAt: generationStartedAt, durationMs: undefined, progress: 0,
+                                        } : {}),
+                                    },
+                                }
+                                : node.id === nodeId
                                 ? isConfigNode
                                     ? {
                                         ...node,
@@ -3257,11 +3381,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                     : isEmptyImageNode
                                         ? {
                                             ...node,
-                                            position: rootNode.position,
-                                            width: rootNode.width,
-                                            height: rootNode.height,
+                                            position: overwriteExisting ? node.position : rootNode.position,
+                                            width: overwriteExisting ? node.width : rootNode.width,
+                                            height: overwriteExisting ? node.height : rootNode.height,
                                             title: rootNode.title,
-                                            metadata: { ...node.metadata, ...rootNode.metadata, errorDetails: undefined },
+                                            metadata: { ...node.metadata, ...rootNode.metadata, ...(overwriteExisting ? { content: undefined, storageKey: "", imageTaskResultId: undefined, taskBackend: undefined, durationMs: undefined } : {}), errorDetails: undefined },
                                         }
                                         : isImageNode
                                             ? {
@@ -3279,7 +3403,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 : node,
                         ),
                         ...(isEmptyImageNode ? [] : [rootNode]),
-                        ...childNodes,
+                        ...childNodes.map((child, index) => {
+                            const parent = prev.find((node) => node.id === (batchRoot?.id || (overwriteExisting ? rootId : "")));
+                            const slot = (batchRoot ? parent?.metadata?.batchChildIds?.length || 0 : 0) + index;
+                            return parent ? { ...child, position: { x: parent.position.x + parent.width + 120 + (slot % 2) * (imageSize.width + 36), y: parent.position.y + Math.floor(slot / 2) * (imageSize.height + rowGap) } } : child;
+                        }),
                     ]);
                     setConnections((prev) => [...prev, ...batchConnections]);
                     setSelectedNodeIds(new Set([nodeId]));
@@ -3291,27 +3419,27 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             try {
                                 const task = await submitNodeTask(targetId, targetTaskIds[targetId], async (signal, onServerTask) => workflowRef
                                     ? await workflowImageTask(await submitCanvasWorkflowTask(workflowRef, generationConfig, "image", requestPrompt, referenceImages, [], [], targetId, projectId, targetTaskIds[targetId], () => onServerTask("workflow"), signal))
-                                    : await createCanvasImageTask({ ...generationConfig, count: "1" }, requestPrompt, referenceImages, { signal, onServerTask, nodeId: targetId, sourceId: projectId, clientTaskId: targetTaskIds[targetId] }));
+                                    : await createCanvasImageTask({ ...generationConfig, count: "1" }, requestPrompt, referenceImages, { signal, onServerTask, nodeId: targetId, sourceId: projectId, clientTaskId: targetTaskIds[targetId] }), overwriteExisting && targetId === nodeId ? runningRequest : undefined);
                                 if (!isNodeTaskActive(targetId, targetTaskIds[targetId])) return true;
                                 if (task.image_url || task.url) {
                                     setNodes((prev) => {
                                         if (!isNodeTaskActive(targetId, targetTaskIds[targetId])) return prev;
-                                        const root = prev.find((node) => node.id === rootId);
+                                        const root = prev.find((node) => node.id === displayRootId);
                                         let next = applyCanvasImageTaskUpdate(prev, targetId, task, generationStartedAt, { width: imageSize.width, height: imageSize.height }, targetTaskIds[targetId]);
-                                        if (task.source !== "workflow" && targetId !== rootId && root?.metadata?.primaryImageId === targetId) {
-                                            next = applyCanvasImageTaskUpdate(next, rootId, task, generationStartedAt, { width: imageSize.width, height: imageSize.height });
+                                        if (task.source !== "workflow" && targetId !== displayRootId && root?.metadata?.primaryImageId === targetId && (!batchRoot || root.metadata.imageTaskId === targetTaskIds[targetId])) {
+                                            next = applyCanvasImageTaskUpdate(next, displayRootId, task, generationStartedAt, { width: imageSize.width, height: imageSize.height });
                                         }
                                         return next;
                                     });
-                                    setConnections((prev) => isNodeTaskActive(targetId, targetTaskIds[targetId]) ? applyCanvasImageTaskConnections(prev, targetId, task, task.source === "workflow" && count > 1 ? rootId : undefined) : prev);
+                                    setConnections((prev) => isNodeTaskActive(targetId, targetTaskIds[targetId]) ? applyCanvasImageTaskConnections(prev, targetId, task, batchRoot?.id || (createBatchRoot ? rootId : undefined)) : prev);
                                     return true;
                                 }
                                 setNodes((prev) => {
                                     if (!isNodeTaskActive(targetId, targetTaskIds[targetId])) return prev;
-                                    const root = prev.find((node) => node.id === rootId);
+                                    const root = prev.find((node) => node.id === displayRootId);
                                     return prev.map((node) => {
-                                        if (node.id !== targetId && node.id !== rootId) return node;
-                                        if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId))
+                                        if (node.id !== targetId && node.id !== displayRootId) return node;
+                                        if (node.id === displayRootId && (targetId === displayRootId || !root?.metadata?.primaryImageId))
                                             return {
                                                 ...node,
                                                 metadata: { ...node.metadata, status: NODE_STATUS_LOADING, imageTaskId: task.id, imageTaskResultId: undefined, primaryImageId: targetId, startedAt: parseCanvasTaskTime(task.started_at ?? task.startedAt ?? task.created_at ?? task.createdAt) || generationStartedAt, progress: task.progress || 0, errorDetails: undefined },
@@ -3331,7 +3459,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                                 setNodes((prev) => workflowRef
                                     ? applyCanvasImageTaskUpdate(prev, targetId, { id: targetTaskIds[targetId], source: "workflow", status: "failed", error: { message: errorDetails } }, generationStartedAt, { width: imageSize.width, height: imageSize.height })
-                                    : prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                                    : prev.map((node) => (node.id === targetId || (node.id === batchRoot?.id && node.metadata?.primaryImageId === targetId && node.metadata.imageTaskId === targetTaskIds[targetId]) ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                                 return false;
                             }
                         }),
@@ -3341,7 +3469,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         prev.map((node) =>
                             node.id === nodeId && isConfigNode
                                 ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR } }
-                                : node.id === rootId && !hasSuccess
+                                : node.id === rootId && !hasSuccess && (!targetTaskIds[rootId] || (node.metadata?.clientTaskId === targetTaskIds[rootId] && isNodeTaskActive(rootId, targetTaskIds[rootId])))
                                     ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR } }
                                     : node,
                         ),
@@ -3356,7 +3484,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     const videoInput = workflowRef ? rawVideoInput : selectVideoReferenceMode(videoGenerationConfig, rawVideoInput, false);
                     const { firstFrame, lastFrame, references: videoReferenceImages } = videoInput;
                     const spec = nodeSizeFromRatio(videoGenerationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
-                    const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
+                    const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && (overwriteExisting || !sourceNode.metadata?.content);
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
                     const clientTaskId = `client_video_task_${nanoid()}`;
                     const parent = sourceNode?.position || { x: 0, y: 0 };
@@ -3370,12 +3498,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, model: videoGenerationConfig.model, channelId: videoGenerationConfig.videoChannelId || videoGenerationConfig.activeChannelId, workflowRef, size: videoGenerationConfig.size, seconds: videoGenerationConfig.videoSeconds, vquality: videoGenerationConfig.vquality, mode: videoGenerationConfig.videoMode, videoReferenceMode: videoGenerationConfig.videoReferenceMode, videoEditing: videoGenerationConfig.videoEditing, videoKeepAudio: videoGenerationConfig.videoKeepAudio, negativePrompt: videoGenerationConfig.videoNegativePrompt, multiShot: videoGenerationConfig.videoMultiShot, shotType: videoGenerationConfig.videoShotType, generateAudio: videoGenerationConfig.videoGenerateAudio, characterOrientation: videoGenerationConfig.videoCharacterOrientation, watermark: videoGenerationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages, referenceVideos: videoInput.videoReferences, referenceAudios: videoInput.audioReferences, firstFrame, lastFrame }), firstFrameNodeId: sourceNode?.metadata?.firstFrameNodeId, lastFrameNodeId: sourceNode?.metadata?.lastFrameNodeId, klingImageNodeIds: sourceNode?.metadata?.klingImageNodeIds, klingMultiPrompt: sourceNode?.metadata?.klingMultiPrompt, klingElementList: sourceNode?.metadata?.klingElementList, startedAt: generationStartedAt, progress: 0, clientTaskId, videoTaskId: clientTaskId },
                     };
                     pendingChildIds = [videoId];
-                    setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
+                    setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode, ...(overwriteExisting ? { position: node.position, width: node.width, height: node.height, metadata: { ...node.metadata, ...videoNode.metadata, taskBackend: undefined, videoTaskVideoId: undefined, videoTaskTranslation: undefined } } : {}) } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     submittedTask = { nodeId: videoId, id: clientTaskId };
                     const videoTask = await submitNodeTask(videoId, clientTaskId, async (signal, onServerTask) => workflowRef
                         ? await workflowVideoTask(await submitCanvasWorkflowTask(workflowRef, videoGenerationConfig, "video", requestPrompt, [firstFrame, ...videoReferenceImages, lastFrame].filter((image): image is ReferenceImage => Boolean(image)), generationContext.referenceVideos, generationContext.referenceAudios, videoId, projectId, clientTaskId, () => onServerTask("workflow"), signal))
-                        : (await createVideoGenerationTask(videoGenerationConfig, requestPrompt, videoInput, undefined, { signal, onServerTask, clientTaskId, source: "canvas", sourceId: videoId })).task);
+                        : (await createVideoGenerationTask(videoGenerationConfig, requestPrompt, videoInput, undefined, { signal, onServerTask, clientTaskId, source: "canvas", sourceId: videoId })).task, overwriteExisting ? runningRequest : undefined);
                     if (!isNodeTaskActive(videoId, clientTaskId)) return;
                     setNodes((prev) => applyCanvasVideoTaskUpdate(prev, videoId, videoTask, videoGenerationConfig, generationStartedAt, spec, clientTaskId));
                     return;
@@ -3384,8 +3512,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 if (mode === "audio") {
                     const workflowAudios = workflowRef ? generationContext.referenceAudios : [];
                     const referenceAudio = workflowRef ? undefined : selectAudioReference(generationConfig, sourceNode?.metadata, generationContext.referenceAudios);
+                    if (preparingRun?.preparing === runningRequest) delete preparingRun.preparing;
                     const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
-                    const isEmptyAudioNode = sourceNode?.type === CanvasNodeType.Audio && !sourceNode.metadata?.content;
+                    const isEmptyAudioNode = sourceNode?.type === CanvasNodeType.Audio && (overwriteExisting || !sourceNode.metadata?.content);
                     const audioId = isEmptyAudioNode ? nodeId : nanoid();
                     const clientAudioTaskId = `client_audio_task_${nanoid()}`;
                     const parent = sourceNode?.position || { x: 0, y: 0 };
@@ -3399,12 +3528,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, startedAt: generationStartedAt, progress: 0, clientTaskId: clientAudioTaskId, audioTaskId: clientAudioTaskId, ...buildAudioGenerationMetadata(generationConfig, sourceNode?.metadata), workflowRef },
                     };
                     pendingChildIds = [audioId];
-                    setNodes((prev) => (isEmptyAudioNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode]));
+                    setNodes((prev) => (isEmptyAudioNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode, ...(overwriteExisting ? { position: node.position, width: node.width, height: node.height, metadata: { ...node.metadata, ...audioNode.metadata, taskBackend: undefined, audioTaskResultId: undefined } } : {}) } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode]));
                     if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
                     submittedTask = { nodeId: audioId, id: clientAudioTaskId };
                     const task = await submitNodeTask(audioId, clientAudioTaskId, async (signal, onServerTask) => workflowRef
                         ? await workflowAudioTask(await submitCanvasWorkflowTask(workflowRef, generationConfig, "audio", effectivePrompt, [], [], workflowAudios, audioId, projectId, clientAudioTaskId, () => onServerTask("workflow"), signal))
-                        : await createCanvasAudioTask(generationConfig, effectivePrompt, { signal, onServerTask, nodeId: audioId, sourceId: projectId, clientTaskId: clientAudioTaskId }, referenceAudio));
+                        : await createCanvasAudioTask(generationConfig, effectivePrompt, { signal, onServerTask, nodeId: audioId, sourceId: projectId, clientTaskId: clientAudioTaskId }, referenceAudio), overwriteExisting ? runningRequest : undefined);
                     if (!isNodeTaskActive(audioId, clientAudioTaskId)) return;
                     setNodes((prev) => applyCanvasAudioTaskUpdate(prev, audioId, task, generationStartedAt, clientAudioTaskId));
                     return;
@@ -3429,7 +3558,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         },
                         width: textConfig.width,
                         height: textConfig.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, fontSize: 14 },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, fontSize: 14, clientTaskId: textTaskId },
                     }));
                     setNodes((prev) => [...prev.map((node) => (node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, prompt: effectivePrompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)), ...childNodes]);
                     setConnections((prev) => [...prev, ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: nodeId, toNodeId: childId }))]);
@@ -3438,37 +3567,50 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 const answers = await Promise.all(
                     (childIds.length ? childIds : [nodeId]).map((targetNodeId) => {
                         let localStreamed = "";
-                        return requestImageQuestion(generationConfig, buildNodeChatMessages({ ...generationContext, prompt: effectivePrompt }), (text) => {
+                        return submitNodeTask(targetNodeId, textTaskId, async (signal) => ({ id: textTaskId, status: "completed", text: await requestImageQuestion(generationConfig, buildNodeChatMessages({ ...generationContext, prompt: effectivePrompt }), (text) => {
                             localStreamed = text;
                             streamed = text;
-                            setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
-                        }).then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed }));
+                            setNodes((prev) => isNodeTaskActive(targetNodeId, textTaskId) && prev.some((node) => node.id === targetNodeId && node.metadata?.clientTaskId === textTaskId) ? prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)) : prev);
+                        }, signal) }), overwriteExisting ? runningRequest : undefined).then((task) => ({ nodeId: targetNodeId, content: task.text || localStreamed })).catch((error) => {
+                            if (!isNodeTaskActive(targetNodeId, textTaskId)) return { nodeId: targetNodeId, content: "" };
+                            throw error;
+                        });
                     }),
                 );
                 const answerByNodeId = new Map(answers.map((item) => [item.nodeId, item.content]));
                 setNodes((prev) =>
-                    prev.map((node) =>
-                        childIds.includes(node.id)
+                    prev.some((node) => (node.id === nodeId && isConfigNode) || (node.metadata?.clientTaskId === textTaskId && isNodeTaskActive(node.id, textTaskId))) ? prev.map((node) =>
+                        (node.id !== nodeId || !isConfigNode) && (node.metadata?.clientTaskId !== textTaskId || !isNodeTaskActive(node.id, textTaskId)) ? node
+                            : childIds.includes(node.id)
                             ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
                             : node.id === nodeId && isConfigNode
                                 ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
                                 : node.id === nodeId && !editingTextNode
                                     ? { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
                                     : node,
-                    ),
+                    ) : prev,
                 );
             } catch (error) {
                 if (submittedTask && !isNodeTaskActive(submittedTask.nodeId, submittedTask.id)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 message.error(errorDetails);
-                setNodes((prev) =>
-                    prev.map((node) => (node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } }) : node)),
-                );
+                setNodes((prev) => {
+                    const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
+                    if (mode === "text" && !prev.some((node) => (node.id === nodeId && isConfigNode)
+                        || (node.metadata?.clientTaskId === textTaskId && isNodeTaskActive(node.id, textTaskId)))) return prev;
+                    return prev.map((node) => {
+                        if (mode === "text" && (node.id !== nodeId || !isConfigNode)
+                            && (node.metadata?.clientTaskId !== textTaskId || !isNodeTaskActive(node.id, textTaskId))) return node;
+                        if (node.id !== nodeId && !pendingChildIds.includes(node.id)) return node;
+                        if (node.id === nodeId && !markSourceStatus) return node;
+                        return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } };
+                    });
+                });
             } finally {
                 if (runningRequestRef.current === runningRequest) setRunningNodeId(null);
             }
         },
-        [effectiveConfig, openConfigDialog, isNodeTaskActive, submitNodeTask],
+        [effectiveConfig, openConfigDialog, isNodeTaskActive, submitNodeTask, handleStopNode],
     );
 
     const getCanvasAgentContext = useCallback(
@@ -4014,7 +4156,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const retryVideoTaskId = node.type === CanvasNodeType.Video ? `client_video_task_${retrySuffix}` : "";
             const retryImageTaskId = isCanvasImageNodeType(node.type) ? `client_image_task_${retrySuffix}` : "";
             const retryAudioTaskId = node.type === CanvasNodeType.Audio ? `client_audio_task_${retrySuffix}` : "";
-            const retryClientTaskId = retryVideoTaskId || retryImageTaskId || retryAudioTaskId;
+            const retryClientTaskId = retryVideoTaskId || retryImageTaskId || retryAudioTaskId || (node.type === CanvasNodeType.Text ? `client_text_task_${retrySuffix}` : "");
             setNodes((prev) => prev.map((item) => {
                 const isRetryTarget = item.id === retryTargetId;
                 if (!isRetryTarget && !(retryMirrorsRoot && item.id === retryBatchRootId)) return item;
@@ -4025,11 +4167,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 if (node.type === CanvasNodeType.Text) {
                     if (!context) return;
                     let streamed = "";
-                    const answer = await requestImageQuestion(generationConfig, buildNodeChatMessages({ ...context, prompt }), (text) => {
+                    const task = await submitNodeTask(node.id, retryClientTaskId, async (signal) => ({ id: retryClientTaskId, status: "completed", text: await requestImageQuestion(generationConfig, buildNodeChatMessages({ ...context, prompt }), (text) => {
                         streamed = text;
-                        setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
-                    });
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
+                        setNodes((prev) => isNodeTaskActive(node.id, retryClientTaskId) && prev.some((item) => item.id === node.id && item.metadata?.clientTaskId === retryClientTaskId) ? prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)) : prev);
+                    }, signal) }));
+                    setNodes((prev) => isNodeTaskActive(node.id, retryClientTaskId) && prev.some((item) => item.id === node.id && item.metadata?.clientTaskId === retryClientTaskId) ? prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: task.text || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)) : prev);
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
@@ -4097,7 +4239,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     setNodes((prev) => applyCanvasImageTaskUpdate(prev, retryTargetId, failedTask, retryStartedAt, { width: node.width, height: node.height }, retryImageTaskId));
                     setConnections((prev) => isNodeTaskActive(retryTargetId, retryImageTaskId) ? applyCanvasImageTaskConnections(prev, retryTargetId, failedTask, retryBatchRootId) : prev);
                 } else {
-                    setNodes((prev) => prev.map((item) => (item.id === retryTargetId || (retryMirrorsRoot && item.id === retryBatchRootId) ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                    setNodes((prev) => node.type !== CanvasNodeType.Text || (isNodeTaskActive(node.id, retryClientTaskId) && prev.some((item) => item.id === node.id && item.metadata?.clientTaskId === retryClientTaskId)) ? prev.map((item) => (item.id === retryTargetId || (retryMirrorsRoot && item.id === retryBatchRootId) ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)) : prev);
                 }
             } finally {
                 if (runningRequestRef.current === runningRequest) setRunningNodeId(null);
@@ -5411,7 +5553,7 @@ async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     );
 }
 
-function syncAssistantReferences(sessions: CanvasAssistantSession[], nodes: CanvasNodeData[], restoreInterrupted = false) {
+function syncAssistantReferences(sessions: CanvasAssistantSession[], nodes: CanvasNodeData[], restoreInterrupted = false, previousNode?: CanvasNodeData) {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     return sessions.map((session) => ({
         ...session,
@@ -5424,7 +5566,7 @@ function syncAssistantReferences(sessions: CanvasAssistantSession[], nodes: Canv
                 activity: interrupted ? undefined : message.activity,
                 references: message.references?.map((reference) => {
                     const node = nodeById.get(reference.id);
-                    const content = node && assistantReferenceContentFromNode(node);
+                    const content = node && (!previousNode || (reference.dataUrl === previousNode.metadata?.content && reference.storageKey === previousNode.metadata?.storageKey)) && assistantReferenceContentFromNode(node);
                     return content ? { ...reference, ...content } : reference;
                 }),
             };
@@ -5440,7 +5582,8 @@ function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeDat
     const safePatch = patch || {};
     const isPanorama = isPanoramaNodeType(node.type);
     const next = { ...node, metadata: { ...node.metadata, ...safePatch, ...(isPanorama ? { size: PANORAMA_IMAGE_SIZE } : {}) } };
-    const spec = isPanorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : node.type === CanvasNodeType.Video ? NODE_DEFAULT_SIZE[CanvasNodeType.Video] : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+    const mediaSide = Math.max(node.width, node.height);
+    const spec = isPanorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video ? { width: mediaSide, height: mediaSide } : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     const size = !isPanorama && typeof safePatch.size === "string" && !node.metadata?.content ? nodeSizeFromRatio(safePatch.size, spec.width, spec.height) : null;
     return size && (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : next;
 }
@@ -5481,7 +5624,20 @@ function getInputSummary(inputs: NodeGenerationInput[]) {
     };
 }
 
-function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, config: AiConfig, startedAt: number, fallbackSize: { width: number; height: number }, clientTaskId?: string) {
+function fitCanvasMediaNode(node: CanvasNodeData, size: CanvasTaskMediaSize["mediaSize"]) {
+    if (!size || node.metadata?.content !== size.content || (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video) || node.metadata.isBatchRoot || node.metadata.batchRootId) return node;
+    const frame = node.metadata.freeResize || Math.abs(node.width / node.height - size.width / size.height) < 1e-6 ? node : fitNodeSize(size.width, size.height, node.width, node.height);
+    if (node.width === frame.width && node.height === frame.height && node.metadata.naturalWidth === size.width && node.metadata.naturalHeight === size.height) return node;
+    return { ...node, width: frame.width, height: frame.height, metadata: { ...node.metadata, naturalWidth: size.width, naturalHeight: size.height } };
+}
+
+function canvasTaskMediaURL(task: CanvasImageTask | CanvasAudioTask | VideoResponse) {
+    if ("video_url" in task) return task.video_url || task.url;
+    if ("image_url" in task || "image_urls" in task) return canvasImageTaskURLs(task)[0];
+    return task.url;
+}
+
+function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse & CanvasTaskMediaSize, config: AiConfig, startedAt: number, fallbackSize: { width: number; height: number }, clientTaskId?: string) {
     const target = nodes.find((node) => node.id === nodeId);
     if (!target || target.metadata?.status === "stopped" || (target.metadata?.status === "stopping" && !canvasVideoTaskCompleted(task)) || (clientTaskId && target.metadata?.clientTaskId !== clientTaskId)) return nodes;
     return nodes.map((node) => {
@@ -5513,7 +5669,7 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
             videoTaskTranslation: task.translationSnapshot,
         };
         if (!completed || !url) return { ...node, metadata };
-        const taskSize = parseCanvasVideoTaskSize(task.size, fallbackSize);
+        const taskSize = task.mediaSize?.content === url ? task.mediaSize : parseCanvasVideoTaskSize(task.size, fallbackSize);
         const videoSize = fitNodeSize(taskSize.width, taskSize.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
         return {
             ...node,
@@ -5543,7 +5699,7 @@ function canvasImageTaskChildIds(nodeId: string, task: CanvasImageTask) {
     return canvasImageTaskURLs(task).map((_, index) => `${nodeId}-result-${index}`);
 }
 
-function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: CanvasImageTask, startedAt: number, fallbackSize: { width: number; height: number }, clientTaskId?: string) {
+function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: CanvasImageTask & CanvasTaskMediaSize, startedAt: number, fallbackSize: { width: number; height: number }, clientTaskId?: string) {
     const target = nodes.find((node) => node.id === nodeId);
     if (!target || target.metadata?.status === "stopped" || (target.metadata?.status === "stopping" && !canvasTaskCompleted(task.status) && !canvasImageTaskURLs(task).length && task.status.toLowerCase() !== "failed") || (clientTaskId && target.metadata?.clientTaskId !== clientTaskId)) return nodes;
     if (target.metadata?.isBatchRoot && target.metadata.imageTaskId !== task.id) return nodes;
@@ -5568,9 +5724,10 @@ function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
         const stored = task.imageStorage?.find((image) => image?.url === url);
         const isPanorama = isPanoramaNodeType(node.type);
         const requestedSize = nodeSizeFromRatio(node.metadata?.size || "", fallbackSize.width, fallbackSize.height);
-        const naturalWidth = task.width || requestedSize?.width || fallbackSize.width || node.width;
-        const naturalHeight = task.height || requestedSize?.height || fallbackSize.height || node.height;
-        const imageSize = isPanorama ? PANORAMA_NODE_SIZE : fitNodeSize(naturalWidth, naturalHeight, NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, NODE_DEFAULT_SIZE[CanvasNodeType.Image].height);
+        const mediaSize = !isPanorama && urls.length === 1 && !node.metadata?.isBatchRoot && !node.metadata?.batchRootId && task.mediaSize?.content === url ? task.mediaSize : undefined;
+        const naturalWidth = mediaSize?.width || task.width || requestedSize?.width || fallbackSize.width || node.width;
+        const naturalHeight = mediaSize?.height || task.height || requestedSize?.height || fallbackSize.height || node.height;
+        const imageSize = isPanorama ? PANORAMA_NODE_SIZE : fitNodeSize(naturalWidth, naturalHeight, NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, NODE_DEFAULT_SIZE[CanvasNodeType.Image].width);
         return {
             ...node,
             width: imageSize.width,
@@ -5581,8 +5738,8 @@ function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
                 content: url,
                 storageKey: task.storageKey || "",
                 status: NODE_STATUS_SUCCESS,
-                naturalWidth: stored?.width || naturalWidth,
-                naturalHeight: stored?.height || naturalHeight,
+                naturalWidth: mediaSize?.width || stored?.width || naturalWidth,
+                naturalHeight: mediaSize?.height || stored?.height || naturalHeight,
                 bytes: task.bytes || 0,
                 mimeType: task.mimeType || "image/png",
                 progress: 100,
@@ -5619,7 +5776,7 @@ function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
             const stored = task.imageStorage?.find((image) => image?.url === url);
             const naturalWidth = stored?.width || root.metadata?.naturalWidth || root.width;
             const naturalHeight = stored?.height || root.metadata?.naturalHeight || root.height;
-            const imageSize = isPanoramaNodeType(root.type) ? PANORAMA_NODE_SIZE : fitNodeSize(naturalWidth, naturalHeight, NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, NODE_DEFAULT_SIZE[CanvasNodeType.Image].height);
+            const imageSize = isPanoramaNodeType(root.type) ? PANORAMA_NODE_SIZE : fitNodeSize(naturalWidth, naturalHeight, NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, NODE_DEFAULT_SIZE[CanvasNodeType.Image].width);
             return {
                 ...targetNode,
                 id: extraIds[index],
@@ -5673,6 +5830,7 @@ function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
         }
         return flatNodes.map((node) => {
             if (node.id !== batchRootId) return node;
+            if (node.metadata?.clientTaskId && node.metadata.imageTaskId === node.metadata.clientTaskId && [NODE_STATUS_LOADING, "stopping"].includes(node.metadata.status || "")) return { ...node, metadata: { ...node.metadata, batchChildIds } };
             const primary = primaryNode?.metadata;
             return {
                 ...node,
@@ -5695,7 +5853,8 @@ function applyCanvasImageTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
                     naturalWidth: primary?.naturalWidth,
                     naturalHeight: primary?.naturalHeight,
                     panoramaProjection: primary?.panoramaProjection,
-                    imageTaskId: undefined,
+                    imageTaskId: primary?.workflowRef ? undefined : primary?.imageTaskId,
+                    workflowRef: primary?.workflowRef,
                     imageTaskResultId: primary?.imageTaskResultId,
                 },
             };
@@ -5983,7 +6142,7 @@ async function submitCanvasWorkflowTask(ref: WorkflowRef, config: AiConfig, mode
     if (!token) throw new Error("工作流生成需要先登录");
     const [referenceImages, referenceVideos, referenceAudios] = await Promise.all([
         Promise.all(images.map((image) => workflowMediaSource(image.dataUrl))),
-        Promise.all(videos.map((video) => workflowMediaSource(video.url))),
+        Promise.all(videos.map((video) => workflowMediaSource(video.url, ref))),
         Promise.all(audios.map((audio) => workflowMediaSource(audio.url))),
     ]);
     if (useUserStore.getState().token !== token) throw new Error("登录状态已变化");

@@ -83,7 +83,7 @@ func StopCanvasTask(userID, kind, id string, workflow bool, source string) (bool
 			task = &model.VideoTask{ID: id, ClientTaskID: originalID, UserID: userID, Source: source, Status: "cancelled", Phase: "cancelled", Revision: 1, CreatedAt: stamp, UpdatedAt: stamp, CompletedAt: stamp}
 		}
 	}
-	stopped, err := repository.StopCanvasTask(userID, id, source, task, current)
+	stopped, comfyCleanup, err := repository.StopCanvasTask(userID, id, source, task, current)
 	if err != nil {
 		return false, err
 	}
@@ -92,6 +92,9 @@ func StopCanvasTask(userID, kind, id string, workflow bool, source string) (bool
 			if run, ok := canvasTaskRuns.Load(kind + ":" + userID + ":" + runID); ok {
 				run.(*canvasTaskRun).cancel()
 			}
+		}
+		if comfyCleanup {
+			WakeComfyBridgePoller()
 		}
 	}
 	return stopped, nil

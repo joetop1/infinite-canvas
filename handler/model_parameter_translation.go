@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -137,11 +136,17 @@ func serveParameterTranslationVideo(w http.ResponseWriter, r *http.Request, body
 	}
 	logContext := aiLogContext{StartedAt: startedAt, Endpoint: "/videos", Method: http.MethodPost, Model: request.Model, Channel: channel, UserID: user.ID, UserDisplayName: firstNonEmpty(user.DisplayName, user.Username), Credits: credits, RequestBody: summarizeAIRequest(body, "application/json")}
 	clientTaskID := readClientVideoTaskID(r)
-	if clientTaskID == "" { clientTaskID = "client_video_task_" + uuid.NewString() }
+	if clientTaskID == "" {
+		clientTaskID = "client_video_task_" + uuid.NewString()
+	}
 	fingerprint := sha256.Sum256(append([]byte(request.Model+"\x00"+channel.ID+"\x00"+userChannelID+"\x00"+readVideoTaskSource(r)+"\x00"+readVideoTaskSourceID(r)+"\x00"), body...))
 	seconds, size := "", ""
-	if value, ok := input.Variables["seconds"]; ok { seconds = fmt.Sprint(value) }
-	if value, ok := input.Variables["size"]; ok { size = fmt.Sprint(value) }
+	if value, ok := input.Variables["seconds"]; ok {
+		seconds = fmt.Sprint(value)
+	}
+	if value, ok := input.Variables["size"]; ok {
+		size = fmt.Sprint(value)
+	}
 	task, _, err := service.SubmitVideoGeneration(r.Context(), service.VideoGenerationInput{
 		UserID: user.ID, UserDisplayName: logContext.UserDisplayName, Model: request.Model,
 		ChannelID: channel.ID, UserChannelID: userChannelID, ChannelName: channel.Name,
@@ -160,16 +165,28 @@ func serveParameterTranslationVideo(w http.ResponseWriter, r *http.Request, body
 			return service.VideoSubmission{}, sendErr
 		}
 		videoURL, taskID := "", ""
-		if len(result.URLs) > 0 { videoURL = result.URLs[0] } else if len(result.Body) > 0 {
-			videoURL = "data:" + strings.Split(result.ContentType, ";")[0] + ";base64," + base64.StdEncoding.EncodeToString(result.Body)
+		if len(result.URLs) > 0 {
+			videoURL = result.URLs[0]
+		} else if len(result.Body) > 0 {
+			// Keep binary results out of task JSON while retaining idempotent replay.
+			media, storageErr := service.UploadStorageObject(ctx, "translated-video.mp4", result.ContentType, result.Body)
+			if storageErr != nil {
+				return service.VideoSubmission{Accepted: true}, fmt.Errorf("视频已返回，但保存素材失败：%w", storageErr)
+			}
+			videoURL = media.URL
 		}
-		if len(result.TaskIDs) > 0 { taskID = result.TaskIDs[0] }
+		if len(result.TaskIDs) > 0 {
+			taskID = result.TaskIDs[0]
+		}
 		saveAIProxyLog(logContext, result.StatusCode, result.ResponseBody, "")
-		return service.VideoSubmission{Accepted: true, UpstreamTaskID: taskID, Status: result.Status, Progress: result.Progress,
+		return service.VideoSubmission{Accepted: true, ContentAvailable: result.ContentURL != "", UpstreamTaskID: taskID, Status: result.Status, Progress: result.Progress,
 			Seconds: seconds, Size: size, VideoURL: videoURL, ResponseBody: result.ResponseBody,
 			ParameterTranslationSnapshot: translation.Snapshot(*input, result)}, nil
 	})
-	if err != nil { Fail(w, err.Error()); return true }
+	if err != nil {
+		Fail(w, err.Error())
+		return true
+	}
 	OK(w, service.VideoTaskResponse(task))
 	return true
 }

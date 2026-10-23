@@ -255,6 +255,15 @@ func apimartVideoConfig(modelName string) apimartInputConfig {
 		config.maxResolution = "720p"
 		config.videoRefField = "video_urls"
 		config.videoRefKind = "array"
+	case model == "wan3-0-video", model == "wan3-0-video-prime":
+		config.aspectField = "size"
+		config.resolutionCase = "upper_video"
+		config.maxImageRefs = 10
+		config.imageRefKind = "seedance2"
+		config.videoRefField = "video_urls"
+		config.videoRefKind = "array"
+		config.audioRefField = "audio_urls"
+		config.audioRefKind = "wan3"
 	case strings.Contains(model, "wan2-7-r2v"), strings.Contains(model, "wan2.7-r2v"):
 		config.aspectField = "size"
 		config.resolutionCase = "upper_video"
@@ -596,6 +605,29 @@ func applyAPIMartVideoDefaults(payload map[string]any, modelName string) {
 			payload["duration"] = duration
 		}
 	}
+	if model == "wan3-0-video" || model == "wan3-0-video-prime" {
+		switch strings.ToLower(strings.TrimSpace(toStringSafe(payload["resolution"]))) {
+		case "2k", "4k":
+			payload["resolution"] = "1080P"
+		}
+		switch strings.ToLower(strings.TrimSpace(toStringSafe(payload["size"]))) {
+		case "auto":
+			payload["size"] = "adaptive"
+		case "21:9":
+			payload["size"] = "16:9"
+		}
+		if !isEmptyValue(payload["duration"]) {
+			duration := normalizeAPIMartInt(payload["duration"])
+			if duration != -1 {
+				if duration < 2 {
+					duration = 2
+				} else if duration > 30 {
+					duration = 30
+				}
+			}
+			payload["duration"] = duration
+		}
+	}
 	if model == "minimax-h3" {
 		switch toStringSafe(payload["resolution"]) {
 		case "480p", "720p", "768p":
@@ -654,7 +686,7 @@ func applyAPIMartVideoGenerateAudioInput(payload map[string]any, modelName strin
 		payload["generate_audio"] = enabled
 	case strings.Contains(model, "seedance-1-5"):
 		payload["audio"] = enabled
-	case model == "wan2-6", model == "wan2-6-i2v-flash":
+	case model == "wan2-6", model == "wan2-6-i2v-flash", model == "wan3-0-video", model == "wan3-0-video-prime":
 		payload["audio"] = enabled
 	case strings.Contains(model, "kling-v3-omni"):
 		if isEmptyValue(payload["video_list"]) {
@@ -689,6 +721,13 @@ func clearAPIMartConflictingReferences(payload map[string]any, modelName string)
 			delete(payload, "video_urls")
 			delete(payload, "audio_urls")
 		}
+	}
+	if (model == "wan3-0-video" || model == "wan3-0-video-prime") && hasAPIMartFirstLastImageRole(payload) {
+		delete(payload, "image_urls")
+		delete(payload, "video_urls")
+		delete(payload, "audio_urls")
+		delete(payload, "audio_url")
+		payload["generation_type"] = "frame"
 	}
 	if (strings.Contains(model, "wan2-7") || strings.Contains(model, "wan2.7")) && !strings.Contains(model, "r2v") && !strings.Contains(model, "videoedit") && !isEmptyValue(payload["video_urls"]) {
 		delete(payload, "audio_url")
@@ -818,6 +857,9 @@ func normalizeAPIMartReferenceInputs(payload map[string]any, modelName string, c
 		if !ok || isEmptyValue(value) {
 			continue
 		}
+		if config.audioRefKind == "wan3" && key == "audio" {
+			continue
+		}
 		values, err := normalizeAPIMartReferenceValues(value, channel)
 		if err != nil {
 			payload["_apimart_reference_error"] = err.Error()
@@ -831,6 +873,9 @@ func normalizeAPIMartReferenceInputs(payload map[string]any, modelName string, c
 		} else if isAPIMartVideoReferenceSource(key, values) && (config.videoRefField != "" || isAPIMartDirectVideoReferenceField(key)) {
 			setAPIMartVideoReference(payload, config, key, values)
 		} else if isAPIMartImageReferenceSource(key, values) && (config.imageRefField != "" || isAPIMartDirectImageReferenceField(key)) {
+			if config.audioRefKind == "wan3" && (key == "input_reference" || key == "input_reference[]") && isEmptyValue(payload["generation_type"]) {
+				payload["generation_type"] = "reference"
+			}
 			setAPIMartImageReference(payload, config, key, values)
 		}
 	}
@@ -1303,6 +1348,10 @@ func clearAPIMartUnusedReferences(payload map[string]any, config apimartInputCon
 	if config.imageRefKind == "seedance2" {
 		keep["image_urls"] = true
 		keep["image_with_roles"] = true
+	}
+	if config.audioRefKind == "wan3" {
+		keep["audio"] = true
+		keep["audio_url"] = true
 	}
 	if config.imageRefKind == "roles" {
 		keep["image_with_roles"] = true
@@ -1980,7 +2029,7 @@ func readAPIMartCreateTask(payload []byte) (string, string, bool) {
 
 func normalizeAPIMartTaskStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "submitted", "pending", "processing", "running", "queued":
+	case "submitted", "pending", "processing", "running", "queued", "unknown":
 		return "processing"
 	case "completed", "success", "succeeded":
 		return "completed"
