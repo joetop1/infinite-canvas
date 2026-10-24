@@ -54,6 +54,11 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 	keepPrivateAPIKeys(&settings, normalizeSettings(saved))
 	keepPrivateAuthSecrets(&settings, normalizeSettings(saved))
 	keepPrivateStorageSecrets(&settings, normalizeSettings(saved))
+	if settings.Public.Auth.Casdoor.Enabled {
+		if err := validateCasdoorSetting(settings.Private.Auth.Casdoor); err != nil {
+			return model.Settings{}, err
+		}
+	}
 	for _, channel := range settings.Private.Channels {
 		if channel.StrictContracts && usesMediaContract(channel) {
 			if strings.TrimSpace(channel.ParameterTranslation) != "" { return model.Settings{}, fmt.Errorf("渠道 %s：自定义参数转译请使用独立渠道，暂不能与统一模型适配混用", channel.Name) }
@@ -295,6 +300,7 @@ func hidePrivateAPIKeys(settings model.Settings) model.Settings {
 		settings.Private.Storage.Providers[i].Password = ""
 	}
 	settings.Private.Auth.LinuxDo.ClientSecret = ""
+	settings.Private.Auth.Casdoor.ClientSecret = ""
 	return settings
 }
 
@@ -325,6 +331,9 @@ func keepPrivateAPIKeys(settings *model.Settings, saved model.Settings) {
 }
 
 func keepPrivateAuthSecrets(settings *model.Settings, saved model.Settings) {
+	if strings.TrimSpace(settings.Private.Auth.Casdoor.ClientSecret) == "" {
+		settings.Private.Auth.Casdoor.ClientSecret = saved.Private.Auth.Casdoor.ClientSecret
+	}
 	if strings.TrimSpace(settings.Private.Auth.LinuxDo.ClientSecret) == "" {
 		settings.Private.Auth.LinuxDo.ClientSecret = saved.Private.Auth.LinuxDo.ClientSecret
 	}

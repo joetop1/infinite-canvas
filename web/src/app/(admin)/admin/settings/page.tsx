@@ -52,10 +52,10 @@ const emptySettings: AdminSettings = {
             allowCustomChannel: true,
             allowUserRemoteChannel: false,
         },
-        auth: { allowRegister: true, linuxDo: { enabled: false } },
+        auth: { allowRegister: true, linuxDo: { enabled: false }, casdoor: { enabled: false } },
         storage: { mode: "local_indexeddb", allowUserProvider: false },
     },
-    private: { channels: [], promptSync: { enabled: true, cron: "0 0 * * *" }, aiLog: { localDirectReportEnabled: false, cleanup: { enabled: false, retentionDays: 14, cron: "0 3 * * *" } }, auth: { linuxDo: { clientId: "", clientSecret: "" } }, storage: { mode: "local_indexeddb", allowUserProvider: false, allowUserGlobalProvider: true, autoSyncAllAssets: false, providers: [], roundRobinCursor: 0, capacityCheck: { enabled: false, cron: "0 */6 * * *" }, capacityLimitBytes: 9 * 1024 * 1024 * 1024 } },
+    private: { channels: [], promptSync: { enabled: true, cron: "0 0 * * *" }, aiLog: { localDirectReportEnabled: false, cleanup: { enabled: false, retentionDays: 14, cron: "0 3 * * *" } }, auth: { linuxDo: { clientId: "", clientSecret: "" }, casdoor: { issuer: "", clientId: "", clientSecret: "", redirectUri: "" } }, storage: { mode: "local_indexeddb", allowUserProvider: false, allowUserGlobalProvider: true, autoSyncAllAssets: false, providers: [], roundRobinCursor: 0, capacityCheck: { enabled: false, cron: "0 */6 * * *" }, capacityLimitBytes: 9 * 1024 * 1024 * 1024 } },
 };
 const emptyChannel: AdminModelChannel = { id: "", protocol: "openai", name: "", baseUrl: modelChannelDefaultBaseUrls.openai, apiKey: "", models: [], weight: 1, timeout: 600, enabled: true, remark: "" };
 const emptyS3StorageProvider: AdminStorageProvider = { id: "", name: "", type: "s3", endpoint: "", region: "auto", bucket: "", accessKeyId: "", secretAccessKey: "", publicBaseUrl: "", pathPrefix: "canvas", username: "", password: "", weight: 1, enabled: true, ownerUserId: "", capacityBytes: 0, capacityCheckedAt: "", capacityExceeded: false };
@@ -604,6 +604,16 @@ export default function AdminSettingsPage() {
                                         </Row>
                                     </Flex>
                                 </Card>
+                                <Card size="small" title="Casdoor 统一登录">
+                                    <Typography.Paragraph type="secondary">在 Casdoor 应用中启用授权码流程，并将下方完整回调地址加入 Redirect URLs。首次登录创建普通用户，遵循本站注册开关；不自动合并已有账号。</Typography.Paragraph>
+                                    <Row gutter={16}>
+                                        <Col xs={24} md={6}><Form.Item name={["public", "auth", "casdoor", "enabled"]} label="开启 Casdoor 登录" valuePropName="checked"><Switch /></Form.Item></Col>
+                                        <Col xs={24} md={18}><Form.Item name={["private", "auth", "casdoor", "issuer"]} label="Casdoor 服务地址（Issuer）"><Input placeholder="https://sso.example.com" /></Form.Item></Col>
+                                        <Col xs={24} md={12}><Form.Item name={["private", "auth", "casdoor", "clientId"]} label="Client ID"><Input /></Form.Item></Col>
+                                        <Col xs={24} md={12}><Form.Item name={["private", "auth", "casdoor", "clientSecret"]} label="Client Secret"><Input.Password placeholder="留空则沿用已保存的密钥" /></Form.Item></Col>
+                                        <Col span={24}><Form.Item name={["private", "auth", "casdoor", "redirectUri"]} label="完整回调地址"><Input placeholder="https://你的画布域名/api/auth/casdoor/callback" /></Form.Item></Col>
+                                    </Row>
+                                </Card>
                                 <Card size="small" title="提示词定时同步">
                                     <Row gutter={16} align="middle">
                                         <Col xs={24} md={8}>
@@ -1137,6 +1147,7 @@ function normalizePublicSetting(setting: Partial<AdminSettings["public"]> = {}):
         },
         auth: {
             allowRegister: setting.auth?.allowRegister !== false,
+            casdoor: { enabled: setting.auth?.casdoor?.enabled === true },
             linuxDo: {
                 enabled: setting.auth?.linuxDo?.enabled === true,
             },
@@ -1168,6 +1179,7 @@ function normalizePrivateSetting(setting: Partial<AdminSettings["private"]> = {}
             },
         },
         auth: {
+            casdoor: { issuer: setting.auth?.casdoor?.issuer || "", clientId: setting.auth?.casdoor?.clientId || "", clientSecret: setting.auth?.casdoor?.clientSecret || "", redirectUri: setting.auth?.casdoor?.redirectUri || "" },
             linuxDo: {
                 clientId: setting.auth?.linuxDo?.clientId || "",
                 clientSecret: setting.auth?.linuxDo?.clientSecret || "",

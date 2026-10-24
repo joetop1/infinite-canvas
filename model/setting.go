@@ -156,6 +156,11 @@ type PublicStorageConfig struct {
 type PublicAuthSetting struct {
 	AllowRegister *bool                    `json:"allowRegister"`
 	LinuxDo       PublicLinuxDoAuthSetting `json:"linuxDo"`
+	Casdoor       PublicCasdoorAuthSetting `json:"casdoor"`
+}
+
+type PublicCasdoorAuthSetting struct {
+	Enabled bool `json:"enabled"`
 }
 
 type PublicLinuxDoAuthSetting struct {
@@ -228,6 +233,14 @@ type PromptSyncSetting struct {
 
 type PrivateAuthSetting struct {
 	LinuxDo PrivateLinuxDoAuthSetting `json:"linuxDo"`
+	Casdoor PrivateCasdoorAuthSetting `json:"casdoor"`
+}
+
+type PrivateCasdoorAuthSetting struct {
+	Issuer string `json:"issuer"`
+	ClientID string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+	RedirectURI string `json:"redirectUri"`
 }
 
 type PrivateLinuxDoAuthSetting struct {

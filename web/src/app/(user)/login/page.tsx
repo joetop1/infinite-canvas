@@ -41,13 +41,16 @@ function LoginContent() {
     const register = useUserStore((state) => state.register);
     const setSession = useUserStore((state) => state.setSession);
     const isLoading = useUserStore((state) => state.isLoading);
+    const casdoorEnabled = useConfigStore((state) => state.publicSettings?.auth?.casdoor?.enabled === true);
     const linuxDoEnabled = useConfigStore((state) => state.publicSettings?.auth?.linuxDo?.enabled === true);
     const allowRegister = useConfigStore((state) => state.publicSettings?.auth?.allowRegister !== false);
     const [mode, setMode] = useState<"login" | "register">("login");
     const redirect = safeRedirect(searchParams.get("redirect"));
 
     useEffect(() => {
-        const token = searchParams.get("token");
+        const fragment = new URLSearchParams(window.location.hash.slice(1));
+        const token = fragment.get("token") || searchParams.get("token");
+        if (fragment.has("token")) window.history.replaceState(null, "", window.location.pathname + window.location.search);
         const error = searchParams.get("error");
         if (error) message.error(error);
         if (!token) return;
@@ -97,7 +100,7 @@ function LoginContent() {
                         aria-label="无限画布"
                     />
                     <h1 className="text-3xl font-semibold tracking-normal text-stone-950 dark:text-stone-100">账号登录</h1>
-                    <p className="mt-3 text-base leading-7 text-stone-500 dark:text-stone-400">支持账号密码和 Linux.do 登录。</p>
+                    <p className="mt-3 text-base leading-7 text-stone-500 dark:text-stone-400">使用账号密码或已开启的统一登录方式。</p>
                 </div>
 
                 <Form<LoginFormValues> layout="vertical" size="large" requiredMark={false} onFinish={submit}>
@@ -129,6 +132,7 @@ function LoginContent() {
                                 使用 Linux.do 登录
                             </Button>
                         ) : null}
+                        {casdoorEnabled ? <Button block href={`/api/auth/casdoor/authorize?redirect=${encodeURIComponent(redirect)}`}>使用 Casdoor 登录</Button> : null}
                     </Space>
                 </Form>
             </section>

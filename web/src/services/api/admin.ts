@@ -253,6 +253,7 @@ export type AdminPublicSettings = {
         linuxDo: {
             enabled: boolean;
         };
+        casdoor: { enabled: boolean };
     };
     storage: {
         mode: string;
@@ -301,6 +302,7 @@ export type AdminPrivateSettings = {
             clientId: string;
             clientSecret: string;
         };
+        casdoor: { issuer: string; clientId: string; clientSecret: string; redirectUri: string };
     };
     storage: {
         mode: string;

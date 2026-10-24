@@ -58,6 +58,7 @@ description: 当前后端主要数据表与字段说明
 | `inviter_id` | string | 邀请人用户 ID |
 | `github_id` | string | GitHub 用户 ID |
 | `linux_do_id` | string | Linux.do 用户 ID |
+| `casdoor_id` | string | Casdoor 已验证 issuer 与 subject 的 SHA-256 绑定摘要，普通索引；本地用户 ID 由相同摘要确定以避免并发重复开户 |
 | `wechat_id` | string | 微信用户 ID |
 | `status` | string | 用户状态：`active`、`ban` |
 | `last_login_at` | string | 最近登录时间 |
@@ -420,6 +421,8 @@ Bridge 持久化请求队列表。普通执行请求由服务端按设备分配�
 | `model` | string | 模型名称 |
 | `credits` | number | 图片每张、视频每秒、文本和音频每次调用预扣的算力点，最多保留两位小数；视频智能时长 `-1` 按 15 秒计算，未配置默认不扣除 |
 
+`auth.casdoor.enabled` 为公开登录开关，默认关闭。
+
 `auth.linuxDo` 当前字段：
 
 | 字段 | 类型 | 说明 |
@@ -466,6 +469,9 @@ Bridge 持久化请求队列表。普通执行请求由服务端按设备分配�
 | --- | --- | --- |
 | `clientId` | string | Linux.do OAuth App Client ID |
 | `clientSecret` | string | Linux.do OAuth App Client Secret，后台返回时隐藏 |
+
+私有 `auth.casdoor` 字段：`issuer`（Casdoor HTTPS 服务地址）、`clientId`、`clientSecret`（后台读取隐藏、留空保留）、`redirectUri`（完整 `/api/auth/casdoor/callback` 地址）。本地调试允许 localhost HTTP。OIDC 授权码、state、nonce 和 PKCE S256 校验，10 分钟 HttpOnly 状态 Cookie，验证 ID Token 签名、issuer、audience 和过期时间。首次开户遵循注册开关，创建普通用户，不按邮箱或用户名自动合并。登录只更新资料及登录时间，不覆盖角色、余额和密码。Casdoor 会话返回使用 URL fragment，由登录页立即移除。
+
 
 后端请求模型时，先按模型名筛选启用且包含该模型的渠道，再按 `weight` 加权随机选择一个渠道。
 

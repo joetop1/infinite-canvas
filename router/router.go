@@ -20,6 +20,8 @@ func New() *gin.Engine {
 	api.POST("/auth/login", gin.WrapF(handler.Login))
 	api.GET("/auth/linux-do/authorize", gin.WrapF(handler.LinuxDoAuthorize))
 	api.GET("/auth/linux-do/callback", gin.WrapF(handler.LinuxDoCallback))
+	api.GET("/auth/casdoor/authorize", gin.WrapF(handler.CasdoorAuthorize))
+	api.GET("/auth/casdoor/callback", gin.WrapF(handler.CasdoorCallback))
 	api.GET("/auth/me", middleware.OptionalAuth, gin.WrapF(handler.CurrentUser))
 	api.GET("/settings", gin.WrapF(handler.Settings))
 	api.GET("/storage/config", gin.WrapF(handler.StorageConfig))

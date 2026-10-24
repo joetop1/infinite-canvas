@@ -280,6 +280,7 @@ func SaveUser(user model.User, password string) (model.User, error) {
 		user.AvatarURL = saved.AvatarURL
 		user.Credits = saved.Credits
 		user.Extra = saved.Extra
+		user.CasdoorID = saved.CasdoorID
 		if user.AffCode == "" {
 			user.AffCode = saved.AffCode
 		}
