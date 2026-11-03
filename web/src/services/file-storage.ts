@@ -244,7 +244,7 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
-async function readVideoMeta(url: string) {
+export async function readVideoMeta(url: string) {
     const metadata = await readMediaMetadata(url, "video").catch(() => null);
     return { width: metadata?.width || 1280, height: metadata?.height || 720, durationMs: metadata?.durationMs };
 }

@@ -17,7 +17,8 @@ import { channelProtocolForConfig, defaultConfig, resolveModelForCapability, typ
 import { collectImageStorageKeys, deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { readMediaMetadata } from "@/lib/media-metadata";
 import { preferredVideoEditor } from "@/lib/video-editing";
-import { downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
+import { uploadAnonymousTemporaryFile } from "@/services/anonymous-storage";
+import { downloadRemoteMedia, readVideoMeta, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -328,6 +329,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
+    const anonymousInputRef = useRef<HTMLInputElement>(null);
     const assetInsertPositionRef = useRef<Position | null>(null);
     const draggedAssetPayloadRef = useRef<InsertAssetPayload | null>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
@@ -1059,6 +1061,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
         return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+    const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
@@ -3084,6 +3087,30 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         return insertAssistantImage({ id: nodeId || `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey, source: payload.source }, position, nodeId);
     }
 
+    async function handleAnonymousInputChange(event: ReactChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file || (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isAudioFile(file))) return;
+
+        const metadataUrl = file.type.startsWith("video/") ? URL.createObjectURL(file) : "";
+        const hideLoading = message.loading("正在匿名上传素材...", 0);
+        try {
+            const [url, videoMeta] = await Promise.all([uploadAnonymousTemporaryFile(file), metadataUrl ? readVideoMeta(metadataUrl) : null]);
+            const payload: InsertAssetPayload = isAudioFile(file)
+                ? { kind: "audio", url, title: file.name, bytes: file.size, mimeType: file.type }
+                : file.type.startsWith("video/")
+                    ? { kind: "video", url, title: file.name, width: videoMeta?.width, height: videoMeta?.height }
+                    : { kind: "image", dataUrl: url, title: file.name };
+            await insertAssetAt(payload);
+            message.success("匿名上传成功，文件将在 7 天后自动删除");
+        } catch (error) {
+            message.error((error as Error).message);
+        } finally {
+            if (metadataUrl) URL.revokeObjectURL(metadataUrl);
+            hideLoading();
+        }
+    }
+
     const handleDrop = useCallback(
         (event: ReactDragEvent<HTMLDivElement>) => {
             event.preventDefault();
@@ -4570,7 +4597,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             .filter((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
                                 const to = nodeById.get(connection.toNodeId);
-                                return Boolean(from && to && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
+                                return Boolean(from && to && (visibleNodeIds.has(connection.fromNodeId) || visibleNodeIds.has(connection.toNodeId)) && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
                             })
                             .map((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
@@ -4827,15 +4854,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
+                    onAnonymousUpload={() => anonymousInputRef.current?.click()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}
                     onCanvasToolChange={setCanvasTool}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
-                    onOpenAssetLibrary={() => {
-                        setAssetPickerTab("library");
-                        setAssetPickerOpen(true);
-                    }}
                     onOpenMyAssets={() => {
                         setAssetPickerTab("my-assets");
                         setAssetPickerOpen(true);
@@ -4902,6 +4926,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     </div>
                 ) : null}
                 <input ref={imageInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
+                <input ref={anonymousInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleAnonymousInputChange} />
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 

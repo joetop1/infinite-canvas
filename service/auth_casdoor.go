@@ -193,7 +193,7 @@ func LoginWithCasdoor(r *http.Request) (model.AuthSession, string, error) {
 	}
 	user, err := repository.SaveCasdoorLogin(model.User{ID: id, CasdoorID: identity, Username: "casdoor_" + identity[:24],
 		DisplayName: firstNonEmpty(profile.Name, profile.Username, "Casdoor 用户"), Email: email, Role: model.UserRoleUser,
-		Status: model.UserStatusActive, AffCode: newAffCode(), CreatedAt: now()}, !found)
+		Status: model.UserStatusActive, CreatedAt: now()}, !found)
 	if err != nil {
 		return model.AuthSession{}, redirect, err
 	}

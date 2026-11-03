@@ -15,7 +15,7 @@ func SaveFailedTranslatedVideoTask(task model.VideoTask, refundLog model.CreditL
 		return err
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		updated := tx.Model(&model.VideoTask{}).Where("id = ? AND status NOT IN ?", task.ID, []string{"completed", "failed", "cancelled", "canceled"}).Select("*").Updates(&task)
+		updated := tx.Model(&model.VideoTask{}).Where("id = ? AND status NOT IN ?", task.ID, []string{"completed", "failed", "cancelled", "canceled"}).Select("*").Omit("RequestBody", "ResponseBody", "WorkflowRef").Updates(&task)
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -56,7 +56,14 @@ func UpdateVideoTask(task model.VideoTask) error {
 	}
 	return db.Model(&model.VideoTask{}).
 		Where("id = ? AND status <> ?", task.ID, "cancelled").
-		Select("*").Updates(&task).Error
+		Select(
+			"UpstreamTaskID", "Status", "Progress", "Seconds", "Size",
+			"VideoURL", "Error", "ErrorDetail",
+			"ParameterTranslationSnapshot", "LastResponse",
+			"UpdatedAt", "LastPolledAt", "CompletedAt",
+			"Phase", "PollFailures", "NextPollAt",
+		).
+		Updates(&task).Error
 }
 
 func ReserveVideoTask(task model.VideoTask, log model.CreditLog) error {
@@ -178,7 +185,7 @@ func ListDueVideoTasks(limit int) ([]model.VideoTask, error) {
 		limit = 100
 	}
 	var tasks []model.VideoTask
-	err = db.Where("status IN ?", []string{"queued", "in_progress", "processing", "running", "unknown"}).
+	err = db.Omit("RequestBody", "WorkflowRef").Where("status IN ?", []string{"queued", "in_progress", "processing", "running", "unknown"}).
 		Where("(phase = '' OR phase IS NULL OR phase NOT IN ?)", []string{model.GenerationSubmitting, model.GenerationUncertain, model.GenerationRecovery}).
 		Where("(next_poll_at = '' OR next_poll_at IS NULL OR next_poll_at <= ?)", time.Now().UTC().Format(time.RFC3339Nano)).
 		Where("(workflow_ref = '' OR workflow_ref IS NULL)").

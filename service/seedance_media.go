@@ -138,7 +138,13 @@ func presignStoredMediaGET(provider model.StorageProvider, objectKey string) (st
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("S3/R2 存储须配置有效的 HTTPS 端点")
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/" + provider.Bucket + "/" + strings.TrimLeft(objectKey, "/")
+	basePath := strings.TrimRight(u.Path, "/")
+	if provider.BucketInHost {
+		u.Host = provider.Bucket + "." + u.Host
+		u.Path = basePath + "/" + strings.TrimLeft(objectKey, "/")
+	} else {
+		u.Path = basePath + "/" + provider.Bucket + "/" + strings.TrimLeft(objectKey, "/")
+	}
 	segments := strings.Split(u.Path, "/")
 	for i := range segments {
 		segments[i] = strings.ReplaceAll(url.QueryEscape(segments[i]), "+", "%20")

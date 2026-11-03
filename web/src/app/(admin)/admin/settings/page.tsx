@@ -20,7 +20,7 @@ import { fetchAdminSettings, fetchChannelModels, measureAdminStorageProvider, sa
 import { clearStorageConfigCache as clearMediaStorageConfigCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageConfigCache } from "@/services/image-storage";
 import { useUserStore } from "@/stores/use-user-store";
-import { filterChannelModelsByCapability, type ModelCapabilities } from "@/stores/use-config-store";
+import { filterChannelModelsByCapability, useConfigStore, type ModelCapabilities } from "@/stores/use-config-store";
 
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
 const WorkflowChannelPane = dynamic(() => import("@/components/workflow/workflow-channel-pane").then((module) => module.WorkflowChannelPane), { ssr: false });
@@ -59,7 +59,7 @@ const emptySettings: AdminSettings = {
     private: { channels: [], promptSync: { enabled: true, cron: "0 0 * * *" }, aiLog: { localDirectReportEnabled: false, cleanup: { enabled: false, retentionDays: 14, cron: "0 3 * * *" } }, auth: { linuxDo: { clientId: "", clientSecret: "" }, casdoor: { issuer: "", clientId: "", clientSecret: "", redirectUri: "" } }, storage: { mode: "local_indexeddb", allowUserProvider: false, allowUserGlobalProvider: true, autoSyncAllAssets: false, providers: [], roundRobinCursor: 0, capacityCheck: { enabled: false, cron: "0 */6 * * *" }, capacityLimitBytes: 9 * 1024 * 1024 * 1024 } },
 };
 const emptyChannel: AdminModelChannel = { id: "", protocol: "openai", name: "", baseUrl: modelChannelDefaultBaseUrls.openai, apiKey: "", models: [], weight: 1, timeout: 600, enabled: true, remark: "" };
-const emptyS3StorageProvider: AdminStorageProvider = { id: "", name: "", type: "s3", endpoint: "", region: "auto", bucket: "", accessKeyId: "", secretAccessKey: "", publicBaseUrl: "", pathPrefix: "canvas", username: "", password: "", weight: 1, enabled: true, ownerUserId: "", capacityBytes: 0, capacityCheckedAt: "", capacityExceeded: false };
+const emptyS3StorageProvider: AdminStorageProvider = { id: "", name: "", type: "s3", endpoint: "", region: "auto", bucket: "", bucketInHost: false, accessKeyId: "", secretAccessKey: "", publicBaseUrl: "", pathPrefix: "canvas", username: "", password: "", weight: 1, enabled: true, ownerUserId: "", capacityBytes: 0, capacityCheckedAt: "", capacityExceeded: false };
 const emptyWebDAVStorageProvider: AdminStorageProvider = { ...emptyS3StorageProvider, name: "", type: "webdav", region: "", allowPrivateNetwork: false };
 
 type SettingsTabKey = "public" | "private";
@@ -190,6 +190,7 @@ export default function AdminSettingsPage() {
                 public: JSON.stringify(merged.public, null, 2),
                 private: JSON.stringify(merged.private, null, 2),
             });
+            await useConfigStore.getState().loadPublicSettings().catch(() => undefined);
             message.success("已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存失败");
@@ -370,6 +371,7 @@ export default function AdminSettingsPage() {
             public: JSON.stringify(merged.public, null, 2),
             private: JSON.stringify(merged.private, null, 2),
         });
+        await useConfigStore.getState().loadPublicSettings().catch(() => undefined);
         message.success("已保存");
     }
 
@@ -798,19 +800,24 @@ export default function AdminSettingsPage() {
                                                                 )}
                                                                 {!isWebDAV && (
                                                                     <>
-                                                                        <Col xs={24} md={4}>
+                                                                        <Col xs={24} md={3}>
                                                                             <Form.Item name={[field.name, "region"]} label="Region">
                                                                                 <Input placeholder="auto" />
                                                                             </Form.Item>
                                                                         </Col>
-                                                                        <Col xs={24} md={4}>
+                                                                        <Col xs={24} md={3}>
                                                                             <Form.Item name={[field.name, "bucket"]} label="Bucket">
                                                                                 <Input />
                                                                             </Form.Item>
                                                                         </Col>
+                                                                        <Col xs={24} md={3}>
+                                                                            <Form.Item name={[field.name, "bucketInHost"]} label="路径 / 子域名" valuePropName="checked">
+                                                                                <Switch />
+                                                                            </Form.Item>
+                                                                        </Col>
                                                                     </>
                                                                 )}
-                                                                <Col xs={24} md={4}>
+                                                                <Col xs={24} md={isWebDAV ? 4 : 3}>
                                                                     <Form.Item name={[field.name, "enabled"]} label="启用" valuePropName="checked">
                                                                         <Switch
                                                                             onChange={(checked) => {
@@ -1190,9 +1197,9 @@ function normalizePublicSetting(setting: Partial<AdminSettings["public"]> = {}):
             channels: setting.modelChannel?.channels || [],
             systemPrompts: {
                 ...emptySettings.public.modelChannel.systemPrompts,
-                image: setting.modelChannel?.systemPrompts?.image || setting.modelChannel?.systemPrompt || "",
+                image: setting.modelChannel?.systemPrompts?.image || "",
                 video: setting.modelChannel?.systemPrompts?.video || "",
-                text: setting.modelChannel?.systemPrompts?.text || setting.modelChannel?.systemPrompt || "",
+                text: setting.modelChannel?.systemPrompts?.text || "",
                 workflow: setting.modelChannel?.systemPrompts?.workflow || "",
                 workflowAgent: setting.modelChannel?.systemPrompts?.workflowAgent || "",
             },
@@ -1407,7 +1414,6 @@ async function collectSettings(form: any, editorMode: Record<SettingsTabKey, Edi
     }
     values.public.modelChannel.availableModels = filterModels(values.public.modelChannel.availableModels, collectChannelModels(values.private.channels));
     values.public.modelChannel.availableWorkflows = filterModels(values.public.modelChannel.availableWorkflows, collectChannelWorkflows(values.private.channels).map((item) => item.value));
-    values.public.modelChannel.systemPrompt = values.public.modelChannel.systemPrompts.image || values.public.modelChannel.systemPrompts.text || "";
     return normalizeSettings(values);
 }
 
